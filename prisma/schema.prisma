@@ -1,0 +1,167 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  brands     Brand[]
+  promptSets PromptSet[]
+  runs       Run[]
+}
+
+// A brand tracked for a client -- either the client's own brand
+// (isClientBrand = true) or a competitor surfaced via --auto-competitors.
+model Brand {
+  id            String   @id @default(cuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name          String
+  domain        String?
+  isClientBrand Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  aliases  BrandAlias[]
+  mentions Mention[]
+
+  @@unique([clientId, name])
+  @@index([clientId])
+}
+
+// Alternate observed name strings that resolve to the same canonical Brand
+// -- e.g. "HiBar Maintain" / "Kitsch Color" as sub-product-line names of
+// "HiBAR" / "Kitsch". Persists the alias-merge problem solved per-run via
+// _merge_substring_aliases() in geo-proposal-generator at the schema level.
+model BrandAlias {
+  id      String @id @default(cuid())
+  brandId String
+  brand   Brand  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  alias   String
+
+  @@unique([brandId, alias])
+  @@index([alias])
+}
+
+model PromptSet {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  label     String
+  createdAt DateTime @default(now())
+
+  prompts Prompt[]
+  runs    Run[]
+
+  @@index([clientId])
+}
+
+model Prompt {
+  id          String    @id @default(cuid())
+  promptSetId String
+  promptSet   PromptSet @relation(fields: [promptSetId], references: [id], onDelete: Cascade)
+  category    String?
+  text        String
+  position    Int
+
+  rawResponses RawResponse[]
+
+  @@index([promptSetId])
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model Run {
+  id          String    @id @default(cuid())
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  promptSetId String
+  promptSet   PromptSet @relation(fields: [promptSetId], references: [id])
+  status      RunStatus @default(PENDING)
+  triggeredBy String?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  rawResponses RawResponse[]
+
+  @@index([clientId])
+  @@index([promptSetId])
+}
+
+enum Platform {
+  CLAUDE
+  CHATGPT
+  GEMINI
+  PERPLEXITY
+}
+
+model RawResponse {
+  id           String    @id @default(cuid())
+  runId        String
+  run          Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  promptId     String
+  prompt       Prompt    @relation(fields: [promptId], references: [id])
+  platform     Platform
+  modelId      String?
+  responseText String    @db.Text
+  createdAt    DateTime  @default(now())
+
+  parsedResult ParsedResult?
+
+  @@unique([runId, promptId, platform])
+  @@index([runId])
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model ParsedResult {
+  id                   String      @id @default(cuid())
+  rawResponseId        String      @unique
+  rawResponse          RawResponse @relation(fields: [rawResponseId], references: [id], onDelete: Cascade)
+  clientBrandMentioned Boolean
+  clientBrandRank      Int?
+  sentiment            Sentiment?
+  excerpt              String?     @db.Text
+  createdAt            DateTime    @default(now())
+
+  mentions Mention[]
+}
+
+// One row per brand (client's own or a competitor) found in a single
+// parsed response -- rawLabel keeps the exact as-seen text pre-alias
+// resolution; brandId is null until that text has been matched to a
+// canonical Brand.
+model Mention {
+  id             String       @id @default(cuid())
+  parsedResultId String
+  parsedResult   ParsedResult @relation(fields: [parsedResultId], references: [id], onDelete: Cascade)
+  brandId        String?
+  brand          Brand?       @relation(fields: [brandId], references: [id])
+  rawLabel       String
+  position       Int?
+  sentiment      Sentiment?
+
+  @@index([parsedResultId])
+  @@index([brandId])
+}
