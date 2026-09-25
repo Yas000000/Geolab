@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { StatusPill } from "@/components/status-pill";
 
 export const dynamic = "force-dynamic";
 
@@ -147,24 +149,6 @@ function RankBadge({ rank }: { rank: number | null | undefined }) {
   );
 }
 
-function StatusPill({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    COMPLETE: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-    RUNNING: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-    PENDING: "bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400",
-    FAILED: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        styles[status] ?? styles.PENDING
-      }`}
-    >
-      {status}
-    </span>
-  );
-}
-
 function fmtPct(n: number) {
   return `${n.toFixed(0)}%`;
 }
@@ -206,7 +190,13 @@ export default async function RunPage({
     <div className="min-h-full bg-zinc-50 dark:bg-black">
       <div className="mx-auto max-w-6xl px-6 py-10">
         <header className="mb-8">
-          <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={`/clients/${run.client.id}`}
+            className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+          >
+            ← {run.client.name}
+          </Link>
+          <div className="mt-1 flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">
               {run.client.name}
             </h1>
