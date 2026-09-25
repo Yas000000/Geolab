@@ -47,3 +47,9 @@ next-env.d.ts
 .env*
 
 /src/generated/prisma
+
+# python
+.venv*/
+__pycache__/
+*.pyc
+_smoke_test.py
