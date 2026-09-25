@@ -53,3 +53,4 @@ next-env.d.ts
 __pycache__/
 *.pyc
 _smoke_test.py
+_browser_try.py
