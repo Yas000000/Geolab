@@ -4,6 +4,14 @@ export const PLATFORM_MAP = {
   gemini: "GEMINI",
 } as const;
 
+// DB enum value (RawResponse.platform) -> display label.
+export const PLATFORM_LABEL: Record<string, string> = {
+  CHATGPT: "ChatGPT",
+  CLAUDE: "Claude",
+  GEMINI: "Gemini",
+  PERPLEXITY: "Perplexity",
+};
+
 export type PipelinePlatformKey = keyof typeof PLATFORM_MAP;
 
 export type PipelineSentiment = "positive" | "neutral" | "negative" | "n/a";

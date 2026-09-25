@@ -2,15 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
+import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 
 export const dynamic = "force-dynamic";
-
-const PLATFORM_LABEL: Record<string, string> = {
-  CHATGPT: "ChatGPT",
-  CLAUDE: "Claude",
-  GEMINI: "Gemini",
-  PERPLEXITY: "Perplexity",
-};
 
 const CATEGORY_LABEL: Record<string, string> = {
   best_top: "Best / Top",
