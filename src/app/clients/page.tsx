@@ -20,11 +20,19 @@ export default async function ClientsPage() {
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <header className="mb-8">
-          <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">Clients</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {clients.length} client{clients.length === 1 ? "" : "s"} tracked
-          </p>
+        <header className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">Clients</h1>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              {clients.length} client{clients.length === 1 ? "" : "s"} tracked
+            </p>
+          </div>
+          <Link
+            href="/clients/new"
+            className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+          >
+            + Add Client
+          </Link>
         </header>
 
         {clients.length === 0 ? (

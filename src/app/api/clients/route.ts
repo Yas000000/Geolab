@@ -1,20 +1,19 @@
 import { prisma } from "@/lib/prisma";
-import { RunStatus } from "@/generated/prisma/client";
+import { RunStatus, RunSchedule } from "@/generated/prisma/client";
 import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@/lib/run-persistence";
+import { parsePromptsText } from "@/lib/parse-prompts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-interface RunsRequestBody {
-  clientName: string;
+interface NewClientRequestBody {
+  brandName: string;
   domain: string;
-  services: string[];
-  brandName?: string;
-  audience?: string;
-  geography?: string;
-  kickoffNotes?: string;
-  competitors?: string[];
+  promptsText: string;
+  schedule?: keyof typeof RunSchedule;
+  ga4PropertyId?: string;
+  gscSiteUrl?: string;
   platforms?: string[];
 }
 
@@ -24,17 +23,25 @@ function pipelineUrl(request: Request): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const body = (await request.json()) as RunsRequestBody;
-  const { clientName, domain, services } = body;
-  const brandName = body.brandName ?? clientName;
+  const body = (await request.json()) as NewClientRequestBody;
+  const { brandName, domain, promptsText } = body;
 
-  const client = await findOrCreateClient(clientName, domain);
+  const parsedPrompts = parsePromptsText(promptsText);
+  if (parsedPrompts.length === 0) {
+    return Response.json({ error: "No prompts found in the pasted text." }, { status: 400 });
+  }
+
+  const client = await findOrCreateClient(brandName, domain, {
+    schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
+    ga4PropertyId: body.ga4PropertyId,
+    gscSiteUrl: body.gscSiteUrl,
+  });
   const brand = await findOrCreateBrand(client.id, brandName, true);
 
   const promptSet = await prisma.promptSet.create({
     data: {
       clientId: client.id,
-      label: `${clientName} — ${new Date().toISOString()}`,
+      label: `${brandName} — ${new Date().toISOString()}`,
     },
   });
 
@@ -59,17 +66,13 @@ export async function POST(request: Request): Promise<Response> {
     pipelineBody: {
       domain,
       brand: brandName,
-      services,
-      audience: body.audience,
-      geography: body.geography,
-      kickoff_notes: body.kickoffNotes,
-      competitors: body.competitors,
+      prompts: parsedPrompts.map((p) => ({ text: p.text, category: p.category })),
       platforms: body.platforms,
     },
   });
 
   return Response.json(
-    { runId: run.id, status: result.status, error: result.error },
+    { clientId: client.id, runId: run.id, status: result.status, error: result.error },
     { status: result.status === "COMPLETE" ? 200 : 502 },
   );
 }

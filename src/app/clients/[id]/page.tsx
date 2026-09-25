@@ -54,6 +54,37 @@ export default async function ClientDetailPage({
 
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Schedule &amp; Analytics
+          </h2>
+          <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+              <div>
+                <span className="text-zinc-500 dark:text-zinc-400">Schedule: </span>
+                <span className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                  {client.schedule}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500 dark:text-zinc-400">GA4 Property: </span>
+                <span className="text-zinc-900 dark:text-zinc-100">
+                  {client.ga4PropertyId || "Not set"}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500 dark:text-zinc-400">GSC Site: </span>
+                <span className="text-zinc-900 dark:text-zinc-100">
+                  {client.gscSiteUrl || "Not set"}
+                </span>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-600">
+              Captured for future automation — no recurring runs are triggered automatically yet.
+            </p>
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             Brands Tracked
           </h2>
           <div className="flex flex-wrap gap-2">

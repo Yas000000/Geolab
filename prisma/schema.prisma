@@ -10,12 +10,25 @@ datasource db {
   provider = "postgresql"
 }
 
+enum RunSchedule {
+  MANUAL
+  NIGHTLY
+  WEEKLY
+  MONTHLY
+}
+
 model Client {
-  id        String   @id @default(cuid())
+  id        String      @id @default(cuid())
   name      String
   domain    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // Captured for a future automation pass -- no real GA4/GSC OAuth or
+  // recurring cron reads these yet, they're just stored intent.
+  schedule      RunSchedule @default(MANUAL)
+  ga4PropertyId String?
+  gscSiteUrl    String?
 
   brands     Brand[]
   promptSets PromptSet[]
