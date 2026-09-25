@@ -1,9 +1,8 @@
 "use client";
 
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 
 export function ModelFilter({ platforms }: { platforms: { key: string; label: string }[] }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const current = searchParams.get("model") ?? "";
@@ -13,7 +12,11 @@ export function ModelFilter({ platforms }: { platforms: { key: string; label: st
     if (value) params.set("model", value);
     else params.delete("model");
     const qs = params.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    // Full navigation, not router.push -- router.push has been observed to
+    // silently fail to commit on this route (the RSC fetch starts, then gets
+    // aborted with "destination stream closed early" and the URL reverts) --
+    // see the same fix + explanation in date-range-picker.tsx.
+    window.location.href = qs ? `${pathname}?${qs}` : pathname;
   }
 
   return (
