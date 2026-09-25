@@ -5,9 +5,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 const PLATFORM_OPTIONS = [
-  { key: "openai", label: "ChatGPT" },
-  { key: "claude", label: "Claude" },
-  { key: "gemini", label: "Gemini" },
+  { key: "openai", label: "ChatGPT", disabled: false },
+  { key: "claude", label: "Claude", disabled: false },
+  { key: "gemini", label: "Gemini", disabled: false },
+  // Not wired into the pipeline yet -- python_pipeline/platforms.py's
+  // PLATFORMS registry has no Perplexity entry until a real API key exists.
+  // Shown disabled rather than omitted so the four-platform slot is visible
+  // now and just needs enabling once the key is available.
+  { key: "perplexity", label: "Perplexity", disabled: true },
 ];
 
 const PROMPTS_PLACEHOLDER = `## Best / Top
@@ -158,19 +163,25 @@ export default function NewClientPage() {
           </div>
 
           <Field label="Platforms">
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4">
               {PLATFORM_OPTIONS.map((p) => (
                 <label
                   key={p.key}
-                  className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300"
+                  className={`flex items-center gap-2 text-sm ${
+                    p.disabled
+                      ? "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
+                      : "text-zinc-700 dark:text-zinc-300"
+                  }`}
                 >
                   <input
                     type="checkbox"
                     checked={platforms.includes(p.key)}
+                    disabled={p.disabled}
                     onChange={() => togglePlatform(p.key)}
-                    className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+                    className="h-4 w-4 rounded border-zinc-300 disabled:cursor-not-allowed dark:border-zinc-700"
                   />
                   {p.label}
+                  {p.disabled && <span className="text-xs">(needs API key)</span>}
                 </label>
               ))}
             </div>
