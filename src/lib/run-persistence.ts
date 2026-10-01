@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Platform, RunStatus } from "@/generated/prisma/client";
 import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-platform-map";
+import { resolveBrandNames } from "@/lib/brand-resolution";
 
 interface PipelinePromptGroup {
   category: string;
@@ -125,23 +126,19 @@ export async function callPipelineAndPersist(params: {
       createdPrompts.map((row, i) => [flatPromptSpecs[i].p.position, row.id]),
     );
 
-    // Brand resolution pre-pass: unique extracted names across every result
-    // cell, resolved sequentially (outside the big write transaction) so two
-    // cells introducing the same new name in one run don't race-create it
-    // twice. Exact-name match only for v1 -- BrandAlias/substring merging is
-    // a deliberate fast-follow, not ported this pass.
-    const brandIdByName = new Map<string, string>();
-    brandIdByName.set(brandName.toLowerCase(), brandId);
-    const uniqueNames = new Set<string>();
+    // Brand resolution pre-pass: every distinct extracted name across this
+    // run's result cells, resolved against the client's full cross-run
+    // Brand/BrandAlias history (see resolveBrandNames for the whole-word
+    // substring-alias merge algorithm, e.g. "Polarion ALM" / "Siemens
+    // Polarion ALM" resolving to one Brand). Runs sequentially, before the
+    // big write transaction, so two cells introducing the same brand-new
+    // name in one run can't race-create it twice.
+    const uniqueExtractedNames = new Set<string>();
     for (const r of pipeline.results) {
-      for (const name of r.parsed.extractedBrands) uniqueNames.add(name);
+      for (const name of r.parsed.extractedBrands) uniqueExtractedNames.add(name);
     }
-    for (const name of uniqueNames) {
-      const key = name.toLowerCase();
-      if (brandIdByName.has(key)) continue;
-      const row = await findOrCreateBrand(clientId, name, false);
-      brandIdByName.set(key, row.id);
-    }
+    const brandIdByName = await resolveBrandNames(clientId, Array.from(uniqueExtractedNames), brandId);
+    brandIdByName.set(brandName.toLowerCase(), brandId);
 
     const writeOps = pipeline.results.map((r) =>
       prisma.rawResponse.create({
@@ -163,7 +160,7 @@ export async function callPipelineAndPersist(params: {
                   rawLabel: name,
                   position: i + 1,
                   sentiment:
-                    name.toLowerCase() === brandName.toLowerCase()
+                    brandIdByName.get(name.toLowerCase()) === brandId
                       ? mapSentiment(r.parsed.sentiment)
                       : null,
                 })),
