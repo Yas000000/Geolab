@@ -53,8 +53,14 @@ export async function runScheduledClient(clientId: string): Promise<void> {
     return;
   }
 
+  // Filtered to PromptSets that actually have prompts, not just the most
+  // recent by creation time -- a prior scheduled attempt that failed AFTER
+  // creating its own PromptSet but BEFORE the pipeline call persisted any
+  // Prompt rows (e.g. a network/auth error) leaves an empty PromptSet
+  // behind that would otherwise shadow the real one. Confirmed live: this
+  // exact shadowing happened after an earlier failed run in this project.
   const latestPromptSet = await prisma.promptSet.findFirst({
-    where: { clientId },
+    where: { clientId, prompts: { some: {} } },
     orderBy: { createdAt: "desc" },
     include: { prompts: { orderBy: { position: "asc" } } },
   });
