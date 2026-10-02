@@ -24,11 +24,16 @@ model Client {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  // Captured for a future automation pass -- no real GA4/GSC OAuth or
-  // recurring cron reads these yet, they're just stored intent.
+  // Captured for a future automation pass -- no real GA4/GSC OAuth reads
+  // these yet, they're just stored intent.
   schedule      RunSchedule @default(MANUAL)
   ga4PropertyId String?
   gscSiteUrl    String?
+
+  // Set only by the cron/queue-triggered scheduled-run path (src/lib/scheduled-run.ts),
+  // never by a manual on-demand run -- keeps "is this client due for its
+  // recurring cadence" independent of ad hoc activity.
+  lastScheduledRunAt DateTime?
 
   brands     Brand[]
   promptSets PromptSet[]

@@ -1,3 +1,13 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/cron/nightly", "schedule": "0 9 * * *" }
+  ],
+  "functions": {
+    "src/app/api/queues/run-scheduled-client/route.ts": {
+      "experimentalTriggers": [
+        { "type": "queue/v2beta", "topic": "llm-pipeline-jobs", "retryAfterSeconds": 60, "maxDeliveries": 5 }
+      ]
+    }
+  }
 }
