@@ -6,13 +6,19 @@ import { callPipelineAndPersist } from "@/lib/run-persistence";
  * No inbound Request is available here (this runs from a queue consumer,
  * not an HTTP route handling a client request), so the pipeline URL can't
  * be derived from request.url the way the two on-demand routes do it.
- * PYTHON_PIPELINE_URL still wins for local dev; production falls back to
- * this deployment's own host via VERCEL_URL (Vercel sets it automatically,
- * no protocol prefix).
+ * PYTHON_PIPELINE_URL still wins for local dev; production uses
+ * VERCEL_PROJECT_PRODUCTION_URL (the stable production domain), NOT
+ * VERCEL_URL -- VERCEL_URL resolves to the ephemeral per-deployment alias
+ * (e.g. geo-reporting-portal-<hash>-<team>.vercel.app), which Vercel's
+ * Deployment Protection walls off behind SSO even for server-to-server
+ * calls. Confirmed live: the stable production domain is NOT behind that
+ * wall (the cron route itself is reachable there), the per-deployment
+ * alias is -- a real 401 "Protected by Vercel Authentication" was hit
+ * and traced to this exact distinction before switching variables.
  */
 function pipelineUrl(): string {
   if (process.env.PYTHON_PIPELINE_URL) return process.env.PYTHON_PIPELINE_URL;
-  return `https://${process.env.VERCEL_URL}/api/run_pipeline`;
+  return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/run_pipeline`;
 }
 
 /**
