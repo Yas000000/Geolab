@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/nightly", "schedule": "0 9 * * *" }
+    { "path": "/api/cron/nightly", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/analytics-pull", "schedule": "0 10 * * *" }
   ],
   "functions": {
     "src/app/api/queues/run-scheduled-client/route.ts": {

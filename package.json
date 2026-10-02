@@ -10,11 +10,14 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@google-analytics/data": "^7.2.1",
     "@neon/config": "^1.7.2",
     "@neon/env": "^1.4.3",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@vercel/queue": "^0.7.0",
+    "google-auth-library": "^11.1.0",
+    "googleapis": "^182.0.0",
     "next": "16.3.6",
     "pg": "^8.23.0",
     "react": "19.2.8",
@@ -36,6 +39,7 @@
   "allowScripts": {
     "@prisma/engines@7.10.0": true,
     "prisma@7.10.0": true,
-    "unrs-resolver@1.12.2": true
+    "unrs-resolver@1.12.2": true,
+    "protobufjs@7.6.6": true
   }
 }

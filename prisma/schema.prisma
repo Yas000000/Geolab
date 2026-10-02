@@ -35,9 +35,59 @@ model Client {
   // recurring cadence" independent of ad hoc activity.
   lastScheduledRunAt DateTime?
 
-  brands     Brand[]
-  promptSets PromptSet[]
-  runs       Run[]
+  brands                  Brand[]
+  promptSets              PromptSet[]
+  runs                    Run[]
+  analyticsSnapshots      AnalyticsSnapshot[]
+  searchConsoleSnapshots  SearchConsoleSnapshot[]
+}
+
+// Singleton row (fixed id "default") -- one Google account's OAuth
+// connection covers every client, since it's granted Viewer-or-better
+// access to each client's GA4/GSC property directly in Google, not
+// something this app grants per client. lastError/lastVerifiedAt drive
+// the /settings connection-status UI -- Testing-mode refresh tokens
+// expire roughly every 7 days (see src/lib/google-oauth.ts), so this
+// needs to surface staleness visibly rather than fail silently.
+model GoogleOAuthConnection {
+  id             String    @id @default("default")
+  connectedEmail String
+  refreshToken   String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  lastVerifiedAt DateTime?
+  lastError      String?
+}
+
+// One row per client per day -- idempotent re-pulls overwrite via the
+// unique constraint rather than accumulating duplicates.
+model AnalyticsSnapshot {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date       DateTime
+  sessions   Int?
+  activeUsers Int?
+  keyEvents  Int?
+  createdAt  DateTime @default(now())
+
+  @@unique([clientId, date])
+  @@index([clientId])
+}
+
+model SearchConsoleSnapshot {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date        DateTime
+  clicks      Int?
+  impressions Int?
+  ctr         Float?
+  avgPosition Float?
+  createdAt   DateTime @default(now())
+
+  @@unique([clientId, date])
+  @@index([clientId])
 }
 
 // A brand tracked for a client -- either the client's own brand

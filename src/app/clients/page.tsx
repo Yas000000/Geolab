@@ -27,12 +27,20 @@ export default async function ClientsPage() {
               {clients.length} client{clients.length === 1 ? "" : "s"} tracked
             </p>
           </div>
-          <Link
-            href="/clients/new"
-            className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-          >
-            + Add Client
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/settings"
+              className="text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-400"
+            >
+              Settings
+            </Link>
+            <Link
+              href="/clients/new"
+              className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+            >
+              + Add Client
+            </Link>
+          </div>
         </header>
 
         {clients.length === 0 ? (

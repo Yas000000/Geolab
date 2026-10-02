@@ -25,6 +25,8 @@ async function getClient(id: string) {
           },
         },
       },
+      analyticsSnapshots: { orderBy: { date: "desc" }, take: 1 },
+      searchConsoleSnapshots: { orderBy: { date: "desc" }, take: 1 },
     },
   });
 }
@@ -363,9 +365,60 @@ export default async function ClientDetailPage({
                 </span>
               </div>
             </div>
-            <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-600">
-              Captured for future automation — no recurring runs are triggered automatically yet.
-            </p>
+
+            {(() => {
+              const ga4 = client.analyticsSnapshots[0];
+              const gsc = client.searchConsoleSnapshots[0];
+              if (!ga4 && !gsc) {
+                return (
+                  <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-600">
+                    No analytics pulled yet — connect a Google account in{" "}
+                    <Link href="/settings" className="underline">
+                      Settings
+                    </Link>{" "}
+                    and the daily pull will populate this.
+                  </p>
+                );
+              }
+              const dateLabel = (ga4 ?? gsc)!.date.toLocaleDateString();
+              return (
+                <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2 border-t border-zinc-100 pt-3 text-sm dark:border-zinc-900">
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">As of {dateLabel}:</span>
+                  {ga4 && (
+                    <>
+                      <div>
+                        <span className="text-zinc-500 dark:text-zinc-400">Sessions: </span>
+                        <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {ga4.sessions ?? "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500 dark:text-zinc-400">Active Users: </span>
+                        <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {ga4.activeUsers ?? "—"}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {gsc && (
+                    <>
+                      <div>
+                        <span className="text-zinc-500 dark:text-zinc-400">GSC Clicks: </span>
+                        <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {gsc.clicks ?? "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500 dark:text-zinc-400">GSC Impressions: </span>
+                        <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {gsc.impressions ?? "—"}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </section>
 
