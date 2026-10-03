@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
 
 const PLATFORM_OPTIONS = [
   { key: "openai", label: "ChatGPT", disabled: false },
@@ -33,6 +34,28 @@ export default function NewClientPage() {
   const [platforms, setPlatforms] = useState<string[]>(["openai", "claude", "gemini"]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Populated from the connected Google account's own real properties/sites
+  // (src/app/api/google/properties/route.ts) so GA4 Property ID / GSC Site
+  // URL can be picked from a searchable list instead of manually copied out
+  // of GA4's Admin UI -- falls back to the plain text inputs below when not
+  // connected or the listing call fails, never blocks the form.
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [ga4Options, setGa4Options] = useState<SearchableSelectOption[]>([]);
+  const [gscOptions, setGscOptions] = useState<SearchableSelectOption[]>([]);
+
+  useEffect(() => {
+    fetch("/api/google/properties")
+      .then((res) => res.json())
+      .then((data: { connected: boolean; ga4: { propertyId: string; displayName: string; accountDisplayName: string }[]; gsc: { siteUrl: string; permissionLevel: string }[] }) => {
+        setGoogleConnected(data.connected);
+        setGa4Options(
+          data.ga4.map((p) => ({ value: p.propertyId, label: p.displayName, sublabel: p.accountDisplayName })),
+        );
+        setGscOptions(data.gsc.map((s) => ({ value: s.siteUrl, label: s.siteUrl, sublabel: s.permissionLevel })));
+      })
+      .catch(() => setGoogleConnected(false));
+  }, []);
 
   function togglePlatform(key: string) {
     setPlatforms((prev) =>
@@ -143,22 +166,42 @@ export default function NewClientPage() {
               </select>
             </Field>
             <Field label="GA4 Property ID">
-              <input
-                type="text"
-                value={ga4PropertyId}
-                onChange={(e) => setGa4PropertyId(e.target.value)}
-                className={inputClass}
-                placeholder="Optional"
-              />
+              {googleConnected && ga4Options.length > 0 ? (
+                <SearchableSelect
+                  options={ga4Options}
+                  value={ga4PropertyId}
+                  onChange={setGa4PropertyId}
+                  placeholder="Search properties…"
+                  className={inputClass}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={ga4PropertyId}
+                  onChange={(e) => setGa4PropertyId(e.target.value)}
+                  className={inputClass}
+                  placeholder="Optional"
+                />
+              )}
             </Field>
             <Field label="GSC Site URL">
-              <input
-                type="text"
-                value={gscSiteUrl}
-                onChange={(e) => setGscSiteUrl(e.target.value)}
-                className={inputClass}
-                placeholder="Optional"
-              />
+              {googleConnected && gscOptions.length > 0 ? (
+                <SearchableSelect
+                  options={gscOptions}
+                  value={gscSiteUrl}
+                  onChange={setGscSiteUrl}
+                  placeholder="Search sites…"
+                  className={inputClass}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={gscSiteUrl}
+                  onChange={(e) => setGscSiteUrl(e.target.value)}
+                  className={inputClass}
+                  placeholder="Optional"
+                />
+              )}
             </Field>
           </div>
 
