@@ -52,7 +52,7 @@ function toApiDate(date: Date): string {
 }
 
 /**
- * Three GA4 Data API calls for one client/day: the native channel-group
+ * Three GA4 Data API calls for one client/range: the native channel-group
  * totals (Direct/AI Assistant/Referral/Unassigned, confirmed live to be
  * real enum values returned by sessionDefaultChannelGroup -- an earlier doc
  * summary wrongly claimed they weren't), then a drill-down into Referral's
@@ -62,6 +62,11 @@ function toApiDate(date: Date): string {
  * (SignUp: 0.0% of Referral, 0.07% of Unassigned), so the whole-bucket
  * totals are stored for context but the *Ai subfields are the real signal.
  *
+ * startDate/endDate instead of a single day so this same function covers
+ * both the daily cron (caller passes the same date twice) and a one-off
+ * multi-month report pull (e.g. geo-monthly-report) without a second
+ * near-duplicate implementation.
+ *
  * Same null-on-no-data / throw-on-error contract as fetchGa4DailyMetrics in
  * google-metrics.ts, so the caller's existing auth-error handling (the cron
  * route's isAuthError short-circuit) keeps working unchanged.
@@ -69,13 +74,13 @@ function toApiDate(date: Date): string {
 export async function fetchAiTrafficBreakdown(
   authClient: OAuth2Client,
   propertyId: string,
-  date: Date,
+  startDate: Date,
+  endDate: Date = startDate,
 ): Promise<AiTrafficBreakdown | null> {
   try {
     const client = new BetaAnalyticsDataClient({ authClient });
-    const dateStr = toApiDate(date);
     const property = normalizePropertyId(propertyId);
-    const dateRanges = [{ startDate: dateStr, endDate: dateStr }];
+    const dateRanges = [{ startDate: toApiDate(startDate), endDate: toApiDate(endDate) }];
 
     const [channelResponse] = await client.runReport({
       property,
@@ -109,6 +114,16 @@ export async function fetchAiTrafficBreakdown(
             stringFilter: { matchType: "EXACT", value: "Referral" },
           },
         },
+        // The Data API defaults to a 10,000-row limit with NO row ordering
+        // when both are unspecified -- live-confirmed SignUp's Referral
+        // channel alone has 14,475+ distinct sources even within a single
+        // quarter, so the unordered default silently dropped an unknown,
+        // non-smallest-first slice of rows (a real undercount this project
+        // shipped before catching it). orderBys descending means any rows
+        // still cut by the 100k cap are the smallest contributors, not
+        // arbitrary ones.
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+        limit: 100000,
       });
       for (const row of referralResponse.rows ?? []) {
         const source = row.dimensionValues?.[0]?.value;
@@ -131,6 +146,10 @@ export async function fetchAiTrafficBreakdown(
             stringFilter: { matchType: "EXACT", value: "Unassigned" },
           },
         },
+        // Same truncation risk as the Referral query above, even though
+        // sessionMedium's cardinality is usually much lower -- see comment there.
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+        limit: 100000,
       });
       for (const row of unassignedResponse.rows ?? []) {
         const medium = row.dimensionValues?.[0]?.value;
