@@ -5,8 +5,10 @@ import { StatusPill } from "@/components/status-pill";
 import { ModelFilter } from "@/components/model-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
+import { SessionCountSparkline, type SessionCountPoint } from "@/components/session-count-sparkline";
 import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
+import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,7 @@ async function getClient(id: string) {
       },
       analyticsSnapshots: { orderBy: { date: "desc" }, take: 1 },
       searchConsoleSnapshots: { orderBy: { date: "desc" }, take: 1 },
+      aiTrafficSnapshots: { orderBy: { date: "asc" } },
     },
   });
 }
@@ -49,6 +52,12 @@ function inWindow(run: RunData, range: DateRange | null): boolean {
   if (!range) return true;
   const endExclusive = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1);
   return run.startedAt.getTime() >= range.start.getTime() && run.startedAt.getTime() < endExclusive.getTime();
+}
+
+function inDateWindow(date: Date, range: DateRange | null): boolean {
+  if (!range) return true;
+  const endExclusive = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1);
+  return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
 }
 
 function buildDashboardData(
@@ -151,6 +160,37 @@ function buildDashboardData(
     })
     .sort((a, b) => b.appearances - a.appearances);
 
+  // AI Platform Traffic -- snapshots filtered the same way runs are (inDateWindow
+  // mirrors inWindow's own inclusive-start/exclusive-end-of-day logic), summed for
+  // the headline cards and turned into one sparkline series per bucket. Only
+  // AI Assistant and the Referral/Unassigned "*Ai" drill-down fields are real,
+  // measured AI traffic -- see src/lib/ai-traffic.ts for why the whole Referral/
+  // Unassigned totals are NOT used here. Direct has no detection signal at all
+  // (no referrer), so it's summed raw and converted to an estimated range via
+  // estimateDirectAiSessions() at render time, never stored as a measured number.
+  const aiSnapshotsInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, dateRange));
+
+  const sumField = (field: "aiAssistantSessions" | "referralAiSessions" | "unassignedAiSessions" | "directSessions") =>
+    aiSnapshotsInRange.reduce((acc, s) => acc + (s[field] ?? 0), 0);
+
+  const aiAssistantTotal = sumField("aiAssistantSessions");
+  const referralAiTotal = sumField("referralAiSessions");
+  const unassignedAiTotal = sumField("unassignedAiSessions");
+  const directTotal = sumField("directSessions");
+  const directAiEstimate = estimateDirectAiSessions(directTotal);
+
+  const sparklineFor = (field: "aiAssistantSessions" | "referralAiSessions" | "unassignedAiSessions" | "directSessions"): SessionCountPoint[] =>
+    aiSnapshotsInRange.map((s) => ({
+      key: s.id,
+      dateLabel: s.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: s[field] ?? 0,
+    }));
+
+  const aiAssistantTrend = sparklineFor("aiAssistantSessions");
+  const referralAiTrend = sparklineFor("referralAiSessions");
+  const unassignedAiTrend = sparklineFor("unassignedAiSessions");
+  const directTrend = sparklineFor("directSessions");
+
   return {
     platformsAvailable,
     trendPoints,
@@ -159,6 +199,16 @@ function buildDashboardData(
     hasComparison,
     totalResponses,
     brandTable,
+    aiAssistantTotal,
+    referralAiTotal,
+    unassignedAiTotal,
+    directTotal,
+    directAiEstimate,
+    aiAssistantTrend,
+    referralAiTrend,
+    unassignedAiTrend,
+    directTrend,
+    hasAnyAiTrafficData: aiSnapshotsInRange.length > 0,
   };
 }
 
@@ -199,6 +249,16 @@ export default async function ClientDetailPage({
     hasComparison,
     totalResponses,
     brandTable,
+    aiAssistantTotal,
+    referralAiTotal,
+    unassignedAiTotal,
+    directTotal,
+    directAiEstimate,
+    aiAssistantTrend,
+    referralAiTrend,
+    unassignedAiTrend,
+    directTrend,
+    hasAnyAiTrafficData,
   } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
 
   const scoreDelta = hasComparison && comparisonHeadlineVisibility != null ? headlineVisibility - comparisonHeadlineVisibility : null;
@@ -260,6 +320,78 @@ export default async function ClientDetailPage({
             </div>
           </div>
           <VisibilityTrendChart points={trendPoints} />
+        </section>
+
+        <section className="mb-8">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            AI Platform Traffic
+          </h2>
+          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            Does not include Google AI Overviews/AI Mode (Organic) -- no reliable way to separate that from
+            regular organic search currently exists.
+          </p>
+          {!hasAnyAiTrafficData ? (
+            <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+              No analytics data in this range yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  AI Assistant
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+                  {aiAssistantTotal.toLocaleString()}
+                </div>
+                <div className="mt-2">
+                  <SessionCountSparkline points={aiAssistantTrend} />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Referral (AI)
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+                  {referralAiTotal.toLocaleString()}
+                </div>
+                <div className="mt-2">
+                  <SessionCountSparkline points={referralAiTrend} color="#7c3aed" />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Unassigned (AI)
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+                  {unassignedAiTotal.toLocaleString()}
+                </div>
+                <div className="mt-2">
+                  <SessionCountSparkline points={unassignedAiTrend} color="#d97706" />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900/40">
+                <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Direct
+                  <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold normal-case tracking-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    estimated
+                  </span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+                  ~{directAiEstimate.mid.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  {directAiEstimate.low.toLocaleString()}–{directAiEstimate.high.toLocaleString()} range
+                  (21–47% of {directTotal.toLocaleString()} Direct sessions)
+                </div>
+                <div className="mt-2">
+                  <SessionCountSparkline points={directTrend} color="#71717a" />
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="mb-8">

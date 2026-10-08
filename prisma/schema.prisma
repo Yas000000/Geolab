@@ -24,8 +24,9 @@ model Client {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  // Captured for a future automation pass -- no real GA4/GSC OAuth reads
-  // these yet, they're just stored intent.
+  // schedule drives the recurring GEO-check cadence (src/lib/scheduled-run.ts).
+  // ga4PropertyId/gscSiteUrl identify which property/site the daily
+  // cron/analytics-pull route pulls real GA4/GSC data for.
   schedule      RunSchedule @default(MANUAL)
   ga4PropertyId String?
   gscSiteUrl    String?
@@ -40,6 +41,7 @@ model Client {
   runs                    Run[]
   analyticsSnapshots      AnalyticsSnapshot[]
   searchConsoleSnapshots  SearchConsoleSnapshot[]
+  aiTrafficSnapshots      AiTrafficSnapshot[]
 }
 
 // Singleton row (fixed id "default") -- one Google account's OAuth
@@ -85,6 +87,30 @@ model SearchConsoleSnapshot {
   ctr         Float?
   avgPosition Float?
   createdAt   DateTime @default(now())
+
+  @@unique([clientId, date])
+  @@index([clientId])
+}
+
+// One row per client per day, same idempotent-upsert shape as AnalyticsSnapshot.
+// Only AI Assistant is a directly-measured whole bucket; Referral/Unassigned
+// totals are stored for context but their *Ai subfields are the real signal
+// (a drill-down match against known AI platform names, not the whole bucket --
+// see src/lib/ai-traffic.ts). directSessions has no AI-share detection signal
+// at all (no referrer) -- any AI-share estimate for it is applied at render
+// time from an external benchmark figure, deliberately not stored here.
+model AiTrafficSnapshot {
+  id                    String   @id @default(cuid())
+  clientId              String
+  client                Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date                  DateTime
+  directSessions        Int?
+  aiAssistantSessions   Int?
+  referralSessions      Int?
+  referralAiSessions    Int?
+  unassignedSessions    Int?
+  unassignedAiSessions  Int?
+  createdAt             DateTime @default(now())
 
   @@unique([clientId, date])
   @@index([clientId])

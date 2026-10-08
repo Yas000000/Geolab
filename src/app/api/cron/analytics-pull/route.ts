@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getGoogleOAuthClient, isAuthError, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
 import { fetchGa4DailyMetrics, fetchGscDailyMetrics } from "@/lib/google-metrics";
+import { fetchAiTrafficBreakdown } from "@/lib/ai-traffic";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +53,15 @@ export async function GET(request: Request): Promise<Response> {
             where: { clientId_date: { clientId: client.id, date } },
             create: { clientId: client.id, date, ...metrics },
             update: metrics,
+          });
+        }
+
+        const aiTraffic = await fetchAiTrafficBreakdown(oauthClient, client.ga4PropertyId, date);
+        if (aiTraffic) {
+          await prisma.aiTrafficSnapshot.upsert({
+            where: { clientId_date: { clientId: client.id, date } },
+            create: { clientId: client.id, date, ...aiTraffic },
+            update: aiTraffic,
           });
         }
       }
