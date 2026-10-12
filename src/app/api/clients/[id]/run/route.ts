@@ -12,12 +12,13 @@ const REASON_MESSAGE: Record<string, string> = {
   no_prompts: "No prior prompts found to reuse -- this client has never completed a run.",
 };
 
-export async function POST(_request: Request, ctx: RouteContext<"/api/clients/[id]/run">): Promise<Response> {
+export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/run">): Promise<Response> {
   const { id } = await ctx.params;
+  const body = (await request.json().catch(() => ({}))) as { liveSearch?: boolean };
 
   // "william@digitalmarketing.com" matches the identity used elsewhere in
   // this app for manually-triggered runs (see /api/clients, /api/runs).
-  const result = await runClientNow(id, "william@digitalmarketing.com");
+  const result = await runClientNow(id, "william@digitalmarketing.com", body.liveSearch === true);
 
   if (result.ok) {
     return Response.json({ runId: result.runId, status: "COMPLETE" });

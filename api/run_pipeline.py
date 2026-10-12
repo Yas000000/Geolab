@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from python_pipeline.geo_prompt_engine import CATEGORY_LABELS, GeoPromptEngine
-from python_pipeline.platforms import PLATFORMS
+from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE
 from python_pipeline.parser import analyze
 from python_pipeline.brand_extractor import extract_brands
 
@@ -30,6 +30,7 @@ class RunPipelineRequest(BaseModel):
     kickoff_notes: str | None = None
     competitors: list[str] | None = None
     platforms: list[str] | None = None
+    live_search: bool = False
 
 
 def _category_label(category: str) -> str:
@@ -91,10 +92,11 @@ def _build_manual_prompt_groups(prompts: list[PromptInput]) -> tuple[list, list]
 
 @app.post("/api/run_pipeline")
 async def run_pipeline(payload: RunPipelineRequest) -> dict:
+    platform_registry = PLATFORMS_LIVE if payload.live_search else PLATFORMS
     platforms_requested = payload.platforms or DEFAULT_PLATFORMS
-    selected = {k: PLATFORMS[k] for k in platforms_requested if k in PLATFORMS}
+    selected = {k: platform_registry[k] for k in platforms_requested if k in platform_registry}
     generation_warnings = []
-    unknown = [k for k in platforms_requested if k not in PLATFORMS]
+    unknown = [k for k in platforms_requested if k not in platform_registry]
     if unknown:
         generation_warnings.append(f"Unknown platform(s) ignored: {', '.join(unknown)}")
 

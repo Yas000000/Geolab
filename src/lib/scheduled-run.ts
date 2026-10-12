@@ -36,7 +36,11 @@ export type RunReusingPromptsResult =
  * (a button a person is waiting on) can show why it didn't run, not just
  * silently do nothing the way the cron path's log-and-return is fine with.
  */
-async function runClientReusingPrompts(clientId: string, triggeredBy: string): Promise<RunReusingPromptsResult> {
+async function runClientReusingPrompts(
+  clientId: string,
+  triggeredBy: string,
+  liveSearch: boolean,
+): Promise<RunReusingPromptsResult> {
   const alreadyRunning = await prisma.run.findFirst({
     where: { clientId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
   });
@@ -65,7 +69,7 @@ async function runClientReusingPrompts(clientId: string, triggeredBy: string): P
   const promptSet = await prisma.promptSet.create({
     data: {
       clientId,
-      label: `${client.name} — ${triggeredBy === "cron" ? "scheduled" : "manual"} ${new Date().toISOString()}`,
+      label: `${client.name} — ${triggeredBy === "cron" ? "scheduled" : "manual"}${liveSearch ? " (live search)" : ""} ${new Date().toISOString()}`,
     },
   });
 
@@ -89,6 +93,7 @@ async function runClientReusingPrompts(clientId: string, triggeredBy: string): P
       domain: client.domain,
       brand: brand.name,
       prompts: latestPromptSet.prompts.map((p) => ({ text: p.text, category: p.category })),
+      live_search: liveSearch,
     },
   });
 
@@ -101,7 +106,7 @@ async function runClientReusingPrompts(clientId: string, triggeredBy: string): P
  * consumer (src/app/api/queues/run-scheduled-client/route.ts).
  */
 export async function runScheduledClient(clientId: string): Promise<void> {
-  const result = await runClientReusingPrompts(clientId, "cron");
+  const result = await runClientReusingPrompts(clientId, "cron", false);
   if (result.ok) {
     await prisma.client.update({ where: { id: clientId }, data: { lastScheduledRunAt: new Date() } });
   } else {
@@ -115,6 +120,10 @@ export async function runScheduledClient(clientId: string): Promise<void> {
  * lastScheduledRunAt (that field tracks recurring-cadence due-ness
  * independent of ad hoc activity, see its own doc comment on Client).
  */
-export async function runClientNow(clientId: string, triggeredBy: string): Promise<RunReusingPromptsResult> {
-  return runClientReusingPrompts(clientId, triggeredBy);
+export async function runClientNow(
+  clientId: string,
+  triggeredBy: string,
+  liveSearch: boolean,
+): Promise<RunReusingPromptsResult> {
+  return runClientReusingPrompts(clientId, triggeredBy, liveSearch);
 }
