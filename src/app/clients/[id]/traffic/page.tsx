@@ -50,6 +50,22 @@ export default async function ClientTrafficPage({
   const client = await getClient(id);
   if (!client) notFound();
 
+  // Full unbounded span (ignores the active date filter) -- used only to show
+  // real dates under the picker's "All Time" option, never for filtering.
+  // These snapshot `date` fields are UTC-midnight date-only values (one row
+  // per client per day), so truncate in UTC terms -- same fix as the
+  // benchmark snapshotDate's own display, see rankings/page.tsx for the
+  // mixed-semantics version of this same note.
+  const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
+  const allTimeStarts = [
+    ...client.analyticsSnapshots.map((s) => utcCalendarDay(s.date)),
+    ...client.searchConsoleSnapshots.map((s) => utcCalendarDay(s.date)),
+    ...client.aiTrafficSnapshots.map((s) => utcCalendarDay(s.date)),
+  ];
+  const allTimeRange: DateRange | null = allTimeStarts.length
+    ? { start: new Date(Math.min(...allTimeStarts)), end: new Date() }
+    : null;
+
   const ga4InRange = client.analyticsSnapshots.filter((s) => inDateWindow(s.date, dateRange));
   const gscInRange = client.searchConsoleSnapshots.filter((s) => inDateWindow(s.date, dateRange));
   const aiInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, dateRange));
@@ -108,7 +124,7 @@ export default async function ClientTrafficPage({
           <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">{client.name}</h1>
           {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
         </div>
-        <DateRangePicker />
+        <DateRangePicker allTimeRange={allTimeRange} />
       </header>
 
       {ga4InRange.length === 0 && gscInRange.length === 0 && aiInRange.length === 0 ? (

@@ -131,7 +131,7 @@ function DropdownList<T extends string>({
   );
 }
 
-export function DateRangePicker() {
+export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | null } = {}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -281,8 +281,16 @@ export function DateRangePicker() {
 
   // --- resolved dates shown under the trigger, so a preset like "Last 30 Days"
   // still shows the actual calendar dates it resolved to, not just its name.
+  // For "All Time" there's no start/end in the URL at all (unbounded, by
+  // design -- filtering logic elsewhere is unaffected), so the caller can
+  // optionally pass the real earliest-to-latest span of its own data via
+  // allTimeRange purely for this display -- never used for filtering.
   const appliedPrimaryRange: DateRange | null =
-    appliedStart && appliedEnd ? { start: parseISODate(appliedStart), end: parseISODate(appliedEnd) } : null;
+    appliedStart && appliedEnd
+      ? { start: parseISODate(appliedStart), end: parseISODate(appliedEnd) }
+      : appliedPreset === "allTime"
+        ? (allTimeRange ?? null)
+        : null;
   const appliedCompareMode = (searchParams.get("compare") as CompareMode) || "none";
   const appliedCompareStartParam = searchParams.get("compareStart");
   const appliedCompareEndParam = searchParams.get("compareEnd");

@@ -217,6 +217,23 @@ function buildDashboardData(
   const completeRuns = client.runs.filter((r) => r.status === "COMPLETE");
   const matchesPlatform = (r: RawResponseData) => !platformFilter || r.platform === platformFilter;
 
+  // Full unbounded span (ignores the active date filter) -- used only to show
+  // real dates under the picker's "All Time" option, never for filtering.
+  // run.startedAt is a real moment-in-time (truncate in LOCAL terms, matching
+  // inWindow()'s own local-day boundary convention); snapshotDate is a
+  // UTC-midnight date-only value (truncate in UTC terms, matching the fix
+  // already applied to its own display in the Historical Benchmark section)
+  // -- mixing these without normalizing first reintroduces that exact bug.
+  const localCalendarDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
+  const allTimeStarts = [
+    ...completeRuns.map((r) => localCalendarDay(r.startedAt)),
+    ...client.benchmarkSnapshots.map((s) => utcCalendarDay(s.snapshotDate)),
+  ];
+  const allTimeRange: DateRange | null = allTimeStarts.length
+    ? { start: new Date(Math.min(...allTimeStarts)), end: new Date() }
+    : null;
+
   const platformsAvailable = Array.from(
     new Set(completeRuns.flatMap((run) => run.rawResponses.map((r) => r.platform))),
   ).sort();
@@ -339,6 +356,7 @@ function buildDashboardData(
     brandTable,
     promptRankings,
     benchmarksInRange,
+    allTimeRange,
   };
 }
 
@@ -381,6 +399,7 @@ export default async function ClientRankingsPage({
     brandTable,
     promptRankings,
     benchmarksInRange,
+    allTimeRange,
   } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
 
   const scoreDelta =
@@ -402,7 +421,7 @@ export default async function ClientRankingsPage({
         </div>
         <div className="flex flex-wrap gap-2">
           <ModelFilter platforms={platformsAvailable.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p }))} />
-          <DateRangePicker />
+          <DateRangePicker allTimeRange={allTimeRange} />
         </div>
       </header>
 
