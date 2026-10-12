@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import {
   PRESETS,
   resolvePreset,
+  resolveComparisonRange,
   toISODate,
   parseISODate,
   formatDisplayDate,
@@ -278,6 +279,22 @@ export function DateRangePicker() {
     }
   }
 
+  // --- resolved dates shown under the trigger, so a preset like "Last 30 Days"
+  // still shows the actual calendar dates it resolved to, not just its name.
+  const appliedPrimaryRange: DateRange | null =
+    appliedStart && appliedEnd ? { start: parseISODate(appliedStart), end: parseISODate(appliedEnd) } : null;
+  const appliedCompareMode = (searchParams.get("compare") as CompareMode) || "none";
+  const appliedCompareStartParam = searchParams.get("compareStart");
+  const appliedCompareEndParam = searchParams.get("compareEnd");
+  const appliedCustomCompareRange: DateRange | null =
+    appliedCompareStartParam && appliedCompareEndParam
+      ? { start: parseISODate(appliedCompareStartParam), end: parseISODate(appliedCompareEndParam) }
+      : null;
+  const resolvedCompareRange =
+    appliedCompareMode !== "none"
+      ? resolveComparisonRange(appliedPrimaryRange, appliedCompareMode, appliedCustomCompareRange)
+      : null;
+
   const secondMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
 
   return (
@@ -290,6 +307,20 @@ export function DateRangePicker() {
         {triggerLabel}
         <span className="text-zinc-400">▾</span>
       </button>
+      {(appliedPrimaryRange || resolvedCompareRange) && (
+        <div className="mt-1 whitespace-nowrap text-right text-[11px] leading-tight text-zinc-500 dark:text-zinc-500">
+          {appliedPrimaryRange && (
+            <div>
+              {formatDisplayDate(appliedPrimaryRange.start)} – {formatDisplayDate(appliedPrimaryRange.end)}
+            </div>
+          )}
+          {resolvedCompareRange && (
+            <div className="text-zinc-400 dark:text-zinc-600">
+              vs. {formatDisplayDate(resolvedCompareRange.start)} – {formatDisplayDate(resolvedCompareRange.end)}
+            </div>
+          )}
+        </div>
+      )}
 
       {open && (
         <div className="absolute right-0 z-20 mt-2 flex rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
