@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { ClientSettingsForm } from "@/components/client-settings-form";
+import { RunNowButton } from "@/components/run-now-button";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,15 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">{client.name}</h1>
         {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
       </header>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Run Now
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <RunNowButton clientId={id} />
+        </div>
+      </section>
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">

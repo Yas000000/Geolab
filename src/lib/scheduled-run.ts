@@ -21,37 +21,33 @@ function pipelineUrl(): string {
   return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/run_pipeline`;
 }
 
+export type RunReusingPromptsResult =
+  | { ok: true; runId: string; status: "COMPLETE" }
+  | { ok: false; reason: "already_running" | "no_brand" | "client_not_found" | "no_domain" | "no_prompts" }
+  | { ok: false; reason: "pipeline_failed"; runId: string; error?: string };
+
 /**
- * Runs one client's recurring scheduled check, triggered by the Queues
- * consumer (src/app/api/queues/run-scheduled-client/route.ts). Reuses the
+ * Shared core for both the recurring scheduled check and an on-demand
+ * "Run Now" trigger (src/app/api/clients/[id]/run/route.ts) -- reuses the
  * client's existing tracked prompts rather than regenerating them, and
  * reuses callPipelineAndPersist unchanged -- its own contract already
  * states the pipeline response shape is identical regardless of trigger.
+ * Returns a real result instead of just logging, so an on-demand caller
+ * (a button a person is waiting on) can show why it didn't run, not just
+ * silently do nothing the way the cron path's log-and-return is fine with.
  */
-export async function runScheduledClient(clientId: string): Promise<void> {
+async function runClientReusingPrompts(clientId: string, triggeredBy: string): Promise<RunReusingPromptsResult> {
   const alreadyRunning = await prisma.run.findFirst({
     where: { clientId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
   });
-  if (alreadyRunning) {
-    console.log(`[scheduled-run] client ${clientId} already has a run in progress, skipping`);
-    return;
-  }
+  if (alreadyRunning) return { ok: false, reason: "already_running" };
 
   const brand = await prisma.brand.findFirst({ where: { clientId, isClientBrand: true } });
-  if (!brand) {
-    console.log(`[scheduled-run] client ${clientId} has no tracked brand, skipping`);
-    return;
-  }
+  if (!brand) return { ok: false, reason: "no_brand" };
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
-  if (!client) {
-    console.log(`[scheduled-run] client ${clientId} not found, skipping`);
-    return;
-  }
-  if (!client.domain) {
-    console.log(`[scheduled-run] client ${clientId} has no domain set, skipping`);
-    return;
-  }
+  if (!client) return { ok: false, reason: "client_not_found" };
+  if (!client.domain) return { ok: false, reason: "no_domain" };
 
   // Filtered to PromptSets that actually have prompts, not just the most
   // recent by creation time -- a prior scheduled attempt that failed AFTER
@@ -64,15 +60,12 @@ export async function runScheduledClient(clientId: string): Promise<void> {
     orderBy: { createdAt: "desc" },
     include: { prompts: { orderBy: { position: "asc" } } },
   });
-  if (!latestPromptSet || latestPromptSet.prompts.length === 0) {
-    console.log(`[scheduled-run] client ${clientId} has no prior prompts to reuse, skipping`);
-    return;
-  }
+  if (!latestPromptSet || latestPromptSet.prompts.length === 0) return { ok: false, reason: "no_prompts" };
 
   const promptSet = await prisma.promptSet.create({
     data: {
       clientId,
-      label: `${client.name} — scheduled ${new Date().toISOString()}`,
+      label: `${client.name} — ${triggeredBy === "cron" ? "scheduled" : "manual"} ${new Date().toISOString()}`,
     },
   });
 
@@ -81,7 +74,7 @@ export async function runScheduledClient(clientId: string): Promise<void> {
       clientId,
       promptSetId: promptSet.id,
       status: RunStatus.RUNNING,
-      triggeredBy: "cron",
+      triggeredBy,
     },
   });
 
@@ -99,9 +92,29 @@ export async function runScheduledClient(clientId: string): Promise<void> {
     },
   });
 
-  if (result.status === "COMPLETE") {
+  if (result.status === "COMPLETE") return { ok: true, runId: run.id, status: "COMPLETE" };
+  return { ok: false, reason: "pipeline_failed", runId: run.id, error: result.error };
+}
+
+/**
+ * Runs one client's recurring scheduled check, triggered by the Queues
+ * consumer (src/app/api/queues/run-scheduled-client/route.ts).
+ */
+export async function runScheduledClient(clientId: string): Promise<void> {
+  const result = await runClientReusingPrompts(clientId, "cron");
+  if (result.ok) {
     await prisma.client.update({ where: { id: clientId }, data: { lastScheduledRunAt: new Date() } });
   } else {
-    console.log(`[scheduled-run] client ${clientId} run ${run.id} failed: ${result.error}`);
+    console.log(`[scheduled-run] client ${clientId} did not run: ${result.reason}`);
   }
+}
+
+/**
+ * On-demand equivalent for the Settings page's "Run Now" button -- same
+ * prompt-reuse logic as the scheduled path, but never touches
+ * lastScheduledRunAt (that field tracks recurring-cadence due-ness
+ * independent of ad hoc activity, see its own doc comment on Client).
+ */
+export async function runClientNow(clientId: string, triggeredBy: string): Promise<RunReusingPromptsResult> {
+  return runClientReusingPrompts(clientId, triggeredBy);
 }
