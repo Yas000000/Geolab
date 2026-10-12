@@ -266,14 +266,7 @@ export default async function ClientDetailPage({
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <Link
-          href="/clients"
-          className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-        >
-          ← All clients
-        </Link>
-
-        <header className="mt-1 mb-6 flex flex-wrap items-end justify-between gap-3">
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">
               {client.name}
