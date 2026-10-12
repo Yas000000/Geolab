@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ModelFilter } from "@/components/model-filter";
@@ -49,6 +50,12 @@ interface BrandRow {
   delta: number | null;
 }
 
+interface PlatformRankCell {
+  avgRank: number | null;
+  movement: number | null; // + = improved (moved up) vs. the comparison period, - = dropped. null when there's no comparison period selected or no rank data on one side.
+  checks: number;
+}
+
 interface PromptRankRow {
   key: string;
   text: string;
@@ -56,9 +63,7 @@ interface PromptRankRow {
   checks: number;
   mentioned: number;
   visibilityPct: number;
-  avgRank: number | null;
-  movement: number | null; // + = improved (moved up) vs. the benchmark, - = dropped
-  benchmarkStatus: "tracked" | "new" | "none"; // "new" = wasn't found in the benchmark but is now; "none" = prompt wasn't in the benchmark at all
+  platforms: Record<string, PlatformRankCell>;
 }
 
 function inWindow(run: RunData, range: DateRange | null): boolean {
@@ -73,66 +78,97 @@ function inDateWindow(date: Date, range: DateRange | null): boolean {
   return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
 }
 
+// Per-platform columns, each with its own +/- Change vs. the comparison period
+// chosen in the date-picker's "Compare To" selector -- the same mechanism
+// already driving the Competitors table's Change column, so the numbers
+// actually move when the date range changes instead of being pinned to a
+// fixed historical reference.
 function buildPromptRankings(
   primaryRuns: RunData[],
-  matchesPlatform: (r: RawResponseData) => boolean,
-  benchmarkPositions: Map<string, number | null>,
+  comparisonRuns: RunData[],
+  hasComparison: boolean,
+  platforms: string[],
 ): PromptRankRow[] {
-  const acc = new Map<
-    string,
-    { text: string; category: string | null; checks: number; mentioned: number; ranks: number[] }
-  >();
+  interface PlatformAcc {
+    primaryRanks: number[];
+    primaryChecks: number;
+    comparisonRanks: number[];
+  }
+  interface Acc {
+    text: string;
+    category: string | null;
+    checks: number;
+    mentioned: number;
+    byPlatform: Map<string, PlatformAcc>;
+  }
+  const acc = new Map<string, Acc>();
+
+  function ensurePlatform(a: Acc, platform: string): PlatformAcc {
+    let p = a.byPlatform.get(platform);
+    if (!p) {
+      p = { primaryRanks: [], primaryChecks: 0, comparisonRanks: [] };
+      a.byPlatform.set(platform, p);
+    }
+    return p;
+  }
+
   for (const run of primaryRuns) {
     for (const r of run.rawResponses) {
-      if (!matchesPlatform(r)) continue;
       const key = r.prompt.text.trim().toLowerCase();
+      let a = acc.get(key);
+      if (!a) {
+        a = { text: r.prompt.text, category: r.prompt.category, checks: 0, mentioned: 0, byPlatform: new Map() };
+        acc.set(key, a);
+      }
+      a.checks += 1;
       const mentioned = !!r.parsedResult?.clientBrandMentioned;
-      const rank = r.parsedResult?.clientBrandRank;
-      const existing = acc.get(key);
-      if (existing) {
-        existing.checks += 1;
-        if (mentioned) {
-          existing.mentioned += 1;
-          if (rank != null) existing.ranks.push(rank);
-        }
-      } else {
-        acc.set(key, {
-          text: r.prompt.text,
-          category: r.prompt.category,
-          checks: 1,
-          mentioned: mentioned ? 1 : 0,
-          ranks: mentioned && rank != null ? [rank] : [],
-        });
+      if (mentioned) a.mentioned += 1;
+      const platformAcc = ensurePlatform(a, r.platform);
+      platformAcc.primaryChecks += 1;
+      if (mentioned) {
+        const rank = r.parsedResult?.clientBrandRank;
+        if (rank != null) platformAcc.primaryRanks.push(rank);
       }
     }
   }
+
+  // Comparison-period ranks only matter for prompts already tracked in the
+  // primary period -- a prompt that only existed in the comparison window
+  // isn't "currently tracked," so it doesn't get a new row.
+  if (hasComparison) {
+    for (const run of comparisonRuns) {
+      for (const r of run.rawResponses) {
+        const key = r.prompt.text.trim().toLowerCase();
+        const a = acc.get(key);
+        if (!a) continue;
+        if (!r.parsedResult?.clientBrandMentioned) continue;
+        const rank = r.parsedResult?.clientBrandRank;
+        if (rank == null) continue;
+        ensurePlatform(a, r.platform).comparisonRanks.push(rank);
+      }
+    }
+  }
+
+  const avg = (arr: number[]) => (arr.length ? arr.reduce((a, c) => a + c, 0) / arr.length : null);
+
   return Array.from(acc.entries())
-    .map(([key, p]) => {
-      const avgRank = p.ranks.length ? p.ranks.reduce((a, c) => a + c, 0) / p.ranks.length : null;
-      const hasBenchmarkEntry = benchmarkPositions.has(key);
-      const benchmarkPosition = benchmarkPositions.get(key) ?? null;
-      let movement: number | null = null;
-      let benchmarkStatus: PromptRankRow["benchmarkStatus"] = "none";
-      if (hasBenchmarkEntry) {
-        if (benchmarkPosition != null && avgRank != null) {
-          movement = benchmarkPosition - avgRank; // positive = moved up (improved)
-          benchmarkStatus = "tracked";
-        } else if (benchmarkPosition == null && avgRank != null) {
-          benchmarkStatus = "new"; // unranked in the benchmark, ranked now
-        } else {
-          benchmarkStatus = "tracked"; // in the benchmark, still unranked now -- no movement to show
-        }
+    .map(([key, a]) => {
+      const platformCells: Record<string, PlatformRankCell> = {};
+      for (const platform of platforms) {
+        const p = a.byPlatform.get(platform);
+        const avgRank = p ? avg(p.primaryRanks) : null;
+        const comparisonAvgRank = p ? avg(p.comparisonRanks) : null;
+        const movement = hasComparison && avgRank != null && comparisonAvgRank != null ? comparisonAvgRank - avgRank : null;
+        platformCells[platform] = { avgRank, movement, checks: p?.primaryChecks ?? 0 };
       }
       return {
         key,
-        text: p.text,
-        category: p.category,
-        checks: p.checks,
-        mentioned: p.mentioned,
-        visibilityPct: p.checks ? (p.mentioned / p.checks) * 100 : 0,
-        avgRank,
-        movement,
-        benchmarkStatus,
+        text: a.text,
+        category: a.category,
+        checks: a.checks,
+        mentioned: a.mentioned,
+        visibilityPct: a.checks ? (a.mentioned / a.checks) * 100 : 0,
+        platforms: platformCells,
       };
     })
     .sort((a, b) => b.visibilityPct - a.visibilityPct);
@@ -187,14 +223,6 @@ function buildDashboardData(
     });
   }
   const trendPoints: TrendPoint[] = datedPoints.sort((a, b) => a.date - b.date).map((d) => d.point);
-
-  // Most-recent-in-range benchmark wins per prompt if there's ever more than one.
-  const benchmarkPositions = new Map<string, number | null>();
-  for (const snap of benchmarksInRange) {
-    for (const p of snap.prompts) {
-      benchmarkPositions.set(p.promptText.trim().toLowerCase(), p.position);
-    }
-  }
 
   const primaryMatching = primaryRuns.flatMap((run) => run.rawResponses.filter(matchesPlatform));
   const totalResponses = primaryMatching.length;
@@ -265,7 +293,7 @@ function buildDashboardData(
     })
     .sort((a, b) => b.appearances - a.appearances);
 
-  const promptRankings = buildPromptRankings(primaryRuns, matchesPlatform, benchmarkPositions);
+  const promptRankings = buildPromptRankings(primaryRuns, comparisonRuns, hasComparison, platformsAvailable);
 
   return {
     platformsAvailable,
@@ -377,12 +405,18 @@ export default async function ClientRankingsPage({
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Prompt Rankings
         </h2>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+          Shown per platform regardless of the Models filter above.
+          {hasComparison
+            ? " Change is vs. the comparison period selected in the date picker."
+            : " Pick a \"Compare To\" period in the date picker to see Change."}
+        </p>
         {promptRankings.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            No completed runs in this range{platformFilter ? " for this platform" : ""}.
+            No completed runs in this range.
           </div>
         ) : (
           <div className="space-y-6">
@@ -395,43 +429,65 @@ export default async function ClientRankingsPage({
                   <table className="w-full text-sm">
                     <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                       <tr>
-                        <th className="px-4 py-2 font-medium">Prompt</th>
-                        <th className="px-4 py-2 font-medium tabular-nums">Visibility</th>
-                        <th className="px-4 py-2 font-medium tabular-nums">Avg Rank</th>
-                        <th className="px-4 py-2 font-medium tabular-nums">Movement</th>
-                        <th className="px-4 py-2 font-medium tabular-nums">Checks</th>
+                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium">
+                          Prompt
+                        </th>
+                        {platformsAvailable.map((platform) => (
+                          <th key={platform} colSpan={2} className="border-l border-zinc-200 px-4 py-1 text-center font-medium dark:border-zinc-800">
+                            {PLATFORM_LABEL[platform] ?? platform}
+                          </th>
+                        ))}
+                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                          Visibility
+                        </th>
+                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                          Checks
+                        </th>
+                      </tr>
+                      <tr>
+                        {platformsAvailable.map((platform) => (
+                          <Fragment key={platform}>
+                            <th className="border-l border-zinc-200 px-3 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                              Rank
+                            </th>
+                            <th className="px-3 py-1.5 text-right font-medium tabular-nums">Change</th>
+                          </Fragment>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                       {prompts.map((p) => (
                         <tr key={p.key} className="bg-white dark:bg-zinc-950">
                           <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{p.text}</td>
+                          {platformsAvailable.map((platform) => {
+                            const cell = p.platforms[platform];
+                            return (
+                              <Fragment key={platform}>
+                                <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
+                                  {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums">
+                                  {cell?.movement == null ? (
+                                    <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                  ) : (
+                                    <span
+                                      className={
+                                        cell.movement > 0
+                                          ? "text-emerald-600 dark:text-emerald-400"
+                                          : cell.movement < 0
+                                            ? "text-red-600 dark:text-red-400"
+                                            : "text-zinc-400 dark:text-zinc-600"
+                                      }
+                                    >
+                                      {cell.movement > 0 ? "+" : cell.movement < 0 ? "-" : "–"}
+                                      {cell.movement !== 0 ? Math.abs(cell.movement).toFixed(1) : ""}
+                                    </span>
+                                  )}
+                                </td>
+                              </Fragment>
+                            );
+                          })}
                           <td className="px-4 py-2 tabular-nums">{p.visibilityPct.toFixed(0)}%</td>
-                          <td className="px-4 py-2 tabular-nums">{p.avgRank != null ? p.avgRank.toFixed(1) : "—"}</td>
-                          <td className="px-4 py-2 tabular-nums">
-                            {p.benchmarkStatus === "none" ? (
-                              <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                            ) : p.benchmarkStatus === "new" ? (
-                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                New
-                              </span>
-                            ) : p.movement == null ? (
-                              <span className="text-zinc-400 dark:text-zinc-600">–</span>
-                            ) : (
-                              <span
-                                className={
-                                  p.movement > 0
-                                    ? "text-emerald-600 dark:text-emerald-400"
-                                    : p.movement < 0
-                                      ? "text-red-600 dark:text-red-400"
-                                      : "text-zinc-400 dark:text-zinc-600"
-                                }
-                              >
-                                {p.movement > 0 ? "▲" : p.movement < 0 ? "▼" : "–"}{" "}
-                                {p.movement !== 0 ? Math.abs(p.movement).toFixed(1) : ""}
-                              </span>
-                            )}
-                          </td>
                           <td className="px-4 py-2 tabular-nums">{p.checks}</td>
                         </tr>
                       ))}
@@ -524,8 +580,7 @@ export default async function ClientRankingsPage({
             Benchmark Competitor Baseline
           </h2>
           <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-            Competitor standing as of the baseline date (shown on the Visibility chart above). Prompt-level baseline
-            movement is now shown inline in Prompt Rankings above.
+            Competitor standing as of the baseline date (shown on the Visibility chart above).
           </p>
           <div className="space-y-6">
             {benchmarksInRange.map((snap) => (
