@@ -63,7 +63,9 @@ interface PromptRankRow {
   checks: number;
   mentioned: number;
   visibilityPct: number;
-  avgRank: number | null; // across all platforms combined
+  visibilityChange: number | null; // pp change vs. the comparison period
+  top3Rate: number | null; // % of mentions (not of all checks) that ranked top-3
+  shareOfVoicePct: number | null; // this prompt's client-brand mentions as a % of all brands' mentions on this prompt
   platforms: Record<string, PlatformRankCell>;
 }
 
@@ -100,7 +102,11 @@ function buildPromptRankings(
     category: string | null;
     checks: number;
     mentioned: number;
-    allRanks: number[]; // across all platforms combined, for the aggregate Avg Rank column
+    top3Count: number;
+    totalMentionRows: number; // all brands' mentions on this prompt, for Share of Voice
+    clientMentionRows: number;
+    comparisonChecks: number;
+    comparisonMentioned: number;
     byPlatform: Map<string, PlatformAcc>;
   }
   const acc = new Map<string, Acc>();
@@ -119,7 +125,18 @@ function buildPromptRankings(
       const key = r.prompt.text.trim().toLowerCase();
       let a = acc.get(key);
       if (!a) {
-        a = { text: r.prompt.text, category: r.prompt.category, checks: 0, mentioned: 0, allRanks: [], byPlatform: new Map() };
+        a = {
+          text: r.prompt.text,
+          category: r.prompt.category,
+          checks: 0,
+          mentioned: 0,
+          top3Count: 0,
+          totalMentionRows: 0,
+          clientMentionRows: 0,
+          comparisonChecks: 0,
+          comparisonMentioned: 0,
+          byPlatform: new Map(),
+        };
         acc.set(key, a);
       }
       a.checks += 1;
@@ -131,8 +148,12 @@ function buildPromptRankings(
         const rank = r.parsedResult?.clientBrandRank;
         if (rank != null) {
           platformAcc.primaryRanks.push(rank);
-          a.allRanks.push(rank);
+          if (rank <= 3) a.top3Count += 1;
         }
+      }
+      for (const m of r.parsedResult?.mentions ?? []) {
+        a.totalMentionRows += 1;
+        if (m.brand?.isClientBrand) a.clientMentionRows += 1;
       }
     }
   }
@@ -146,10 +167,11 @@ function buildPromptRankings(
         const key = r.prompt.text.trim().toLowerCase();
         const a = acc.get(key);
         if (!a) continue;
-        if (!r.parsedResult?.clientBrandMentioned) continue;
+        a.comparisonChecks += 1;
+        const mentioned = !!r.parsedResult?.clientBrandMentioned;
+        if (mentioned) a.comparisonMentioned += 1;
         const rank = r.parsedResult?.clientBrandRank;
-        if (rank == null) continue;
-        ensurePlatform(a, r.platform).comparisonRanks.push(rank);
+        if (mentioned && rank != null) ensurePlatform(a, r.platform).comparisonRanks.push(rank);
       }
     }
   }
@@ -166,14 +188,20 @@ function buildPromptRankings(
         const movement = hasComparison && avgRank != null && comparisonAvgRank != null ? comparisonAvgRank - avgRank : null;
         platformCells[platform] = { avgRank, movement, checks: p?.primaryChecks ?? 0 };
       }
+      const visibilityPct = a.checks ? (a.mentioned / a.checks) * 100 : 0;
+      const comparisonVisibilityPct = a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null;
+      const visibilityChange = hasComparison && comparisonVisibilityPct != null ? visibilityPct - comparisonVisibilityPct : null;
+
       return {
         key,
         text: a.text,
         category: a.category,
         checks: a.checks,
         mentioned: a.mentioned,
-        visibilityPct: a.checks ? (a.mentioned / a.checks) * 100 : 0,
-        avgRank: avg(a.allRanks),
+        visibilityPct,
+        visibilityChange,
+        top3Rate: a.mentioned ? (a.top3Count / a.mentioned) * 100 : null,
+        shareOfVoicePct: a.totalMentionRows ? (a.clientMentionRows / a.totalMentionRows) * 100 : null,
         platforms: platformCells,
       };
     })
@@ -443,11 +471,14 @@ export default async function ClientRankingsPage({
                             {PLATFORM_LABEL[platform] ?? platform}
                           </th>
                         ))}
-                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                        <th colSpan={2} className="border-l border-zinc-200 px-4 py-1 text-center font-medium dark:border-zinc-800">
                           Visibility
                         </th>
                         <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
-                          Avg Rank
+                          Top-3 Rate
+                        </th>
+                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                          Share of Voice
                         </th>
                       </tr>
                       <tr>
@@ -459,6 +490,10 @@ export default async function ClientRankingsPage({
                             <th className="px-3 py-1.5 text-right font-medium tabular-nums">Change</th>
                           </Fragment>
                         ))}
+                        <th className="border-l border-zinc-200 px-3 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                          %
+                        </th>
+                        <th className="px-3 py-1.5 text-right font-medium tabular-nums">Change</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -493,8 +528,31 @@ export default async function ClientRankingsPage({
                               </Fragment>
                             );
                           })}
-                          <td className="px-4 py-2 tabular-nums">{p.visibilityPct.toFixed(0)}%</td>
-                          <td className="px-4 py-2 tabular-nums">{p.avgRank != null ? p.avgRank.toFixed(1) : "—"}</td>
+                          <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
+                            {p.visibilityPct.toFixed(0)}%
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {p.visibilityChange == null ? (
+                              <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                            ) : (
+                              <span
+                                className={
+                                  p.visibilityChange > 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : p.visibilityChange < 0
+                                      ? "text-red-600 dark:text-red-400"
+                                      : "text-zinc-400 dark:text-zinc-600"
+                                }
+                              >
+                                {p.visibilityChange > 0 ? "+" : p.visibilityChange < 0 ? "-" : "–"}
+                                {p.visibilityChange !== 0 ? Math.abs(p.visibilityChange).toFixed(0) + "pp" : ""}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 tabular-nums">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
+                          <td className="px-4 py-2 tabular-nums">
+                            {p.shareOfVoicePct != null ? `${p.shareOfVoicePct.toFixed(0)}%` : "—"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
