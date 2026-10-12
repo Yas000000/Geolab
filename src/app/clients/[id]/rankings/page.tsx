@@ -63,6 +63,7 @@ interface PromptRankRow {
   checks: number;
   mentioned: number;
   visibilityPct: number;
+  avgRank: number | null; // across all platforms combined
   platforms: Record<string, PlatformRankCell>;
 }
 
@@ -99,6 +100,7 @@ function buildPromptRankings(
     category: string | null;
     checks: number;
     mentioned: number;
+    allRanks: number[]; // across all platforms combined, for the aggregate Avg Rank column
     byPlatform: Map<string, PlatformAcc>;
   }
   const acc = new Map<string, Acc>();
@@ -117,7 +119,7 @@ function buildPromptRankings(
       const key = r.prompt.text.trim().toLowerCase();
       let a = acc.get(key);
       if (!a) {
-        a = { text: r.prompt.text, category: r.prompt.category, checks: 0, mentioned: 0, byPlatform: new Map() };
+        a = { text: r.prompt.text, category: r.prompt.category, checks: 0, mentioned: 0, allRanks: [], byPlatform: new Map() };
         acc.set(key, a);
       }
       a.checks += 1;
@@ -127,7 +129,10 @@ function buildPromptRankings(
       platformAcc.primaryChecks += 1;
       if (mentioned) {
         const rank = r.parsedResult?.clientBrandRank;
-        if (rank != null) platformAcc.primaryRanks.push(rank);
+        if (rank != null) {
+          platformAcc.primaryRanks.push(rank);
+          a.allRanks.push(rank);
+        }
       }
     }
   }
@@ -168,6 +173,7 @@ function buildPromptRankings(
         checks: a.checks,
         mentioned: a.mentioned,
         visibilityPct: a.checks ? (a.mentioned / a.checks) * 100 : 0,
+        avgRank: avg(a.allRanks),
         platforms: platformCells,
       };
     })
@@ -441,7 +447,7 @@ export default async function ClientRankingsPage({
                           Visibility
                         </th>
                         <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
-                          Checks
+                          Avg Rank
                         </th>
                       </tr>
                       <tr>
@@ -488,7 +494,7 @@ export default async function ClientRankingsPage({
                             );
                           })}
                           <td className="px-4 py-2 tabular-nums">{p.visibilityPct.toFixed(0)}%</td>
-                          <td className="px-4 py-2 tabular-nums">{p.checks}</td>
+                          <td className="px-4 py-2 tabular-nums">{p.avgRank != null ? p.avgRank.toFixed(1) : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
