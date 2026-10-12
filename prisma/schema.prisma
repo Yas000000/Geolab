@@ -42,6 +42,68 @@ model Client {
   analyticsSnapshots      AnalyticsSnapshot[]
   searchConsoleSnapshots  SearchConsoleSnapshot[]
   aiTrafficSnapshots      AiTrafficSnapshot[]
+  benchmarkSnapshots      BenchmarkSnapshot[]
+}
+
+// A historical benchmark imported from an external document (an ISA/strategy
+// report PDF run before this portal tracked the client) -- deliberately
+// separate from Run/RawResponse/ParsedResult/Mention rather than forced
+// through that pipeline. Those model real individual prompt-check events;
+// an ISA's numbers are already pre-aggregated percentages from whatever tool
+// produced the report, and reproducing those exact percentages through the
+// appearances/totalResponses math would mean fabricating synthetic check
+// rows, corrupting "how many real checks happened" for the sake of a single
+// historical reference point. The Rankings page renders this as a clearly-
+// labeled baseline/reference, not as additional real run data.
+model BenchmarkSnapshot {
+  id               String   @id @default(cuid())
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  source           String   // e.g. "ISA" -- room for other historical-import sources later
+  snapshotDate     DateTime
+  ownVisibilityPct Float?
+  ownPosition      Float?
+  ownSentiment     Int?     // 0-100, as the source document reports it
+  sourceNote       String?  // e.g. the source PDF's filename/path, for traceability
+  createdAt        DateTime @default(now())
+
+  competitors BenchmarkCompetitor[]
+  prompts     BenchmarkPromptResult[]
+
+  @@index([clientId])
+}
+
+// One row per competitor brand in a BenchmarkSnapshot's comparison table.
+// rawLabel (not a Brand relation) because these come from a document, not a
+// detected/resolved mention -- no alias-merge guarantees apply here.
+model BenchmarkCompetitor {
+  id              String            @id @default(cuid())
+  snapshotId      String
+  snapshot        BenchmarkSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  name            String
+  position        Float?
+  visibilityPct   Float?
+  sentiment       Int?
+  shareOfVoicePct Float?
+
+  @@index([snapshotId])
+}
+
+// One row per prompt in a BenchmarkSnapshot's per-prompt benchmark table.
+// promptText (not a Prompt relation) -- the source document's prompt list
+// doesn't necessarily match any PromptSet ever run through this portal.
+// A prompt genuinely absent from the source document's benchmark table
+// (vs. present but unranked) simply has no row here at all.
+model BenchmarkPromptResult {
+  id            String            @id @default(cuid())
+  snapshotId    String
+  snapshot      BenchmarkSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  promptText    String
+  position      Float?
+  sentiment     Int?
+  visibilityPct Float?
+
+  @@index([snapshotId])
 }
 
 // Singleton row (fixed id "default") -- one Google account's OAuth

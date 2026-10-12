@@ -27,6 +27,10 @@ async function getClient(id: string) {
           },
         },
       },
+      benchmarkSnapshots: {
+        orderBy: { snapshotDate: "asc" },
+        include: { competitors: { orderBy: { visibilityPct: "desc" } }, prompts: true },
+      },
     },
   });
 }
@@ -428,6 +432,104 @@ export default async function ClientRankingsPage({
           .
         </p>
       </section>
+
+      {client.benchmarkSnapshots.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Historical Benchmark
+          </h2>
+          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            Imported from a prior report, not from a tracked run — a reference point, not additional live data.
+          </p>
+          <div className="space-y-6">
+            {client.benchmarkSnapshots.map((snap) => (
+              <div
+                key={snap.id}
+                className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/40"
+              >
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                  <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    {snap.source} benchmark — {snap.snapshotDate.toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      timeZone: "UTC", // snapshotDate is stored as a UTC-midnight date-only value; without
+                      // pinning the display timezone, a browser/server behind UTC renders the day before.
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
+                    {snap.ownVisibilityPct != null && <span>Visibility: {snap.ownVisibilityPct}%</span>}
+                    {snap.ownPosition != null && <span>Position: {snap.ownPosition}</span>}
+                    {snap.ownSentiment != null && <span>Sentiment: {snap.ownSentiment}/100</span>}
+                  </div>
+                </div>
+
+                {snap.prompts.length > 0 && (
+                  <div className="mb-4 overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                        <tr>
+                          <th className="px-3 py-1.5 font-medium">Prompt</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Sentiment</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Visibility</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {snap.prompts.map((p) => (
+                          <tr key={p.id} className="bg-white dark:bg-zinc-950">
+                            <td className="px-3 py-1.5 text-zinc-700 dark:text-zinc-300">{p.promptText}</td>
+                            <td className="px-3 py-1.5 tabular-nums">{p.position ?? "—"}</td>
+                            <td className="px-3 py-1.5 tabular-nums">{p.sentiment ?? "—"}</td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {p.visibilityPct != null ? `${p.visibilityPct}%` : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {snap.competitors.length > 0 && (
+                  <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                        <tr>
+                          <th className="px-3 py-1.5 font-medium">Brand</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Visibility</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Sentiment</th>
+                          <th className="px-3 py-1.5 font-medium tabular-nums">Share of Voice</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {snap.competitors.map((c) => (
+                          <tr key={c.id} className="bg-white dark:bg-zinc-950">
+                            <td className="px-3 py-1.5 font-medium text-zinc-900 dark:text-zinc-100">{c.name}</td>
+                            <td className="px-3 py-1.5 tabular-nums">{c.position ?? "—"}</td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {c.visibilityPct != null ? `${c.visibilityPct}%` : "—"}
+                            </td>
+                            <td className="px-3 py-1.5 tabular-nums">{c.sentiment ?? "—"}</td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {c.shareOfVoicePct != null ? `${c.shareOfVoicePct}%` : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {snap.sourceNote && (
+                  <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">{snap.sourceNote}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

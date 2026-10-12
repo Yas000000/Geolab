@@ -1,0 +1,42 @@
+{
+  "source": "ISA",
+  "snapshotDate": "2026-03-17",
+  "sourceNote": "Yellowbrick - Interdependence ISA - kw prompt updated.pdf (GEO Benchmark pp.60-61, Industry Ranking Comparison p.68)",
+  "ownVisibilityPct": 0.1,
+  "ownPosition": 1,
+  "ownSentiment": 85,
+  "competitors": [
+    { "name": "mcleanhospital.org", "position": 2.5, "visibilityPct": 28.2, "sentiment": 84, "shareOfVoicePct": 4.4 },
+    { "name": "nami.org", "position": 3.9, "visibilityPct": 26.8, "sentiment": 78, "shareOfVoicePct": 4.2 },
+    { "name": "rogersbh.org", "position": 3.3, "visibilityPct": 23.5, "sentiment": 80, "shareOfVoicePct": 3.6 },
+    { "name": "mclean.harvard.edu", "position": 1.5, "visibilityPct": 20.7, "sentiment": 84, "shareOfVoicePct": 3.2 },
+    { "name": "menningerclinic.com", "position": 3.1, "visibilityPct": 16.9, "sentiment": 81, "shareOfVoicePct": 2.6 }
+  ],
+  "prompts": [
+    { "promptText": "What are the best residential mental health treatment programs for young adults in the US?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment centers offer comprehensive mental health programs for emerging adults?", "position": 1, "sentiment": 85, "visibilityPct": 2.22 },
+    { "promptText": "What are the best IOP programs for young adults with depression and anxiety?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best PHP mental health programs for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What programs help young adults with mental health challenges transition back to work or school?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best mental health residential programs near a university setting for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment centers specialize in complex psychiatric cases for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best programs for young adults who refuse traditional therapy?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment programs help adult children with severe depression or anxiety?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best mental health programs that combine therapy with neuroscience treatments?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment centers offer neurofeedback or neuroscience-based mental health treatment?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best treatment programs for adult children struggling with mental health issues?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What programs specialize in treating mental health issues in college-age adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best psychiatric treatment centers in the US for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What programs help struggling young adults who are not improving with outpatient therapy?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best private mental health treatment centers for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment centers offer supported living mental health programs for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the top mental health treatment centers for emerging adults who failed traditional therapy?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What residential mental health programs help young adults transition to independent living?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best intensive outpatient mental health programs for young adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What treatment centers specialize in mental health care for emerging adults?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What is the best partial hospitalization program for young adults with mental health disorders?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What psychiatric treatment centers specialize in young adults aged 18-30?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the best treatment programs for struggling young adults with mental health issues?", "position": null, "sentiment": null, "visibilityPct": 0 },
+    { "promptText": "What are the top residential treatment programs for young adults with depression or anxiety?", "position": null, "sentiment": null, "visibilityPct": 0 }
+  ]
+}
