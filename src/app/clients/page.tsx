@@ -66,7 +66,7 @@ export default async function ClientsPage() {
                     <tr key={client.id} className="bg-white dark:bg-zinc-950">
                       <td className="px-4 py-3">
                         <Link
-                          href={`/clients/${client.id}`}
+                          href={`/clients/${client.id}/traffic`}
                           className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                         >
                           {client.name}
@@ -93,7 +93,7 @@ export default async function ClientsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Link
-                          href={`/clients/${client.id}`}
+                          href={`/clients/${client.id}/traffic`}
                           className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
                         >
                           View →

@@ -2,19 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
-import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
+import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
 
 export const dynamic = "force-dynamic";
-
-const CATEGORY_LABEL: Record<string, string> = {
-  best_top: "Best / Top",
-  comparison: "Comparison",
-  who_offers: "Who Offers",
-  recommendation_by_audience: "Recommendation by Audience",
-  recommendation_by_constraint: "Recommendation by Constraint",
-  shortlist_vendor_selection: "Shortlist / Vendor Selection",
-  location_based: "Location-Based",
-};
 
 async function getRun(id: string) {
   return prisma.run.findUnique({
@@ -185,7 +175,7 @@ export default async function RunPage({
       <div className="mx-auto max-w-6xl px-6 py-10">
         <header className="mb-8">
           <Link
-            href={`/clients/${run.client.id}`}
+            href={`/clients/${run.client.id}/settings`}
             className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
           >
             ← {run.client.name}

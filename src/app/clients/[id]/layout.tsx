@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ClientSwitcher } from "@/components/client-switcher";
+import { ClientNav } from "@/components/client-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +22,12 @@ export default async function ClientLayout({
 }) {
   const { id } = await params;
   const clients = await getClientList();
+  if (!clients.some((c) => c.id === id)) notFound();
 
   return (
-    <div>
+    <div className="min-h-full bg-zinc-50 dark:bg-black">
       <div className="border-b border-zinc-200 bg-white px-6 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mx-auto flex max-w-5xl items-center gap-4">
+        <div className="mx-auto flex max-w-6xl items-center gap-4">
           <ClientSwitcher clients={clients} currentId={id} />
           <Link
             href="/clients"
@@ -34,7 +37,10 @@ export default async function ClientLayout({
           </Link>
         </div>
       </div>
-      {children}
+      <div className="mx-auto flex max-w-6xl gap-8 px-6 py-10">
+        <ClientNav clientId={id} />
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ export function ClientSwitcher({
     // silently fail to commit on client dashboard routes (the RSC fetch
     // starts, then aborts with "destination stream closed early" and the
     // URL reverts). Same workaround as model-filter.tsx / date-range-picker.tsx.
-    window.location.href = `/clients/${id}`;
+    window.location.href = `/clients/${id}/traffic`;
   }
 
   return (
