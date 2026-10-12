@@ -6,7 +6,10 @@ export interface TrendPoint {
   runId: string;
   dateLabel: string;
   value: number; // 0-100
+  isBenchmark?: boolean; // a historical baseline point (see benchmark-import.ts), not a tracked run
 }
+
+const BENCHMARK_COLOR = "#a1a1aa"; // zinc-400 -- visually distinct from the real-data accent blue
 
 const ACCENT = "#2563eb";
 const WIDTH = 800;
@@ -69,24 +72,45 @@ export function VisibilityTrendChart({ points }: { points: TrendPoint[] }) {
           <path d={linePath} fill="none" stroke={ACCENT} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
         )}
 
-        {points.map((p, i) => (
-          <g key={p.runId}>
-            <circle
-              cx={xFor(i)}
-              cy={yFor(p.value)}
-              r={hoverIdx === i ? 5 : 3.5}
-              fill={ACCENT}
-              stroke="white"
-              strokeWidth={1.5}
-              className="cursor-pointer"
-              onMouseEnter={() => setHoverIdx(i)}
-              onMouseLeave={() => setHoverIdx(null)}
-            />
-            <text x={xFor(i)} y={HEIGHT - 8} textAnchor="middle" className="fill-zinc-400 text-[10px] dark:fill-zinc-600">
-              {p.dateLabel}
-            </text>
-          </g>
-        ))}
+        {points.map((p, i) =>
+          p.isBenchmark ? (
+            <g key={p.runId}>
+              <rect
+                x={xFor(i) - (hoverIdx === i ? 5.5 : 4)}
+                y={yFor(p.value) - (hoverIdx === i ? 5.5 : 4)}
+                width={(hoverIdx === i ? 5.5 : 4) * 2}
+                height={(hoverIdx === i ? 5.5 : 4) * 2}
+                fill="white"
+                stroke={BENCHMARK_COLOR}
+                strokeWidth={2}
+                transform={`rotate(45 ${xFor(i)} ${yFor(p.value)})`}
+                className="cursor-pointer dark:fill-zinc-950"
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)}
+              />
+              <text x={xFor(i)} y={HEIGHT - 8} textAnchor="middle" className="fill-zinc-400 text-[10px] dark:fill-zinc-600">
+                {p.dateLabel}
+              </text>
+            </g>
+          ) : (
+            <g key={p.runId}>
+              <circle
+                cx={xFor(i)}
+                cy={yFor(p.value)}
+                r={hoverIdx === i ? 5 : 3.5}
+                fill={ACCENT}
+                stroke="white"
+                strokeWidth={1.5}
+                className="cursor-pointer"
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)}
+              />
+              <text x={xFor(i)} y={HEIGHT - 8} textAnchor="middle" className="fill-zinc-400 text-[10px] dark:fill-zinc-600">
+                {p.dateLabel}
+              </text>
+            </g>
+          ),
+        )}
       </svg>
 
       {hoverIdx !== null && (
@@ -99,6 +123,9 @@ export function VisibilityTrendChart({ points }: { points: TrendPoint[] }) {
         >
           <div className="font-medium text-zinc-900 dark:text-zinc-100">
             {points[hoverIdx].value.toFixed(0)}%
+            {points[hoverIdx].isBenchmark && (
+              <span className="ml-1 font-normal text-zinc-400 dark:text-zinc-600">(baseline)</span>
+            )}
           </div>
           <div className="text-zinc-500 dark:text-zinc-400">{points[hoverIdx].dateLabel}</div>
         </div>

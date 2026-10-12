@@ -57,6 +57,8 @@ interface PromptRankRow {
   mentioned: number;
   visibilityPct: number;
   avgRank: number | null;
+  movement: number | null; // + = improved (moved up) vs. the benchmark, - = dropped
+  benchmarkStatus: "tracked" | "new" | "none"; // "new" = wasn't found in the benchmark but is now; "none" = prompt wasn't in the benchmark at all
 }
 
 function inWindow(run: RunData, range: DateRange | null): boolean {
@@ -65,9 +67,16 @@ function inWindow(run: RunData, range: DateRange | null): boolean {
   return run.startedAt.getTime() >= range.start.getTime() && run.startedAt.getTime() < endExclusive.getTime();
 }
 
+function inDateWindow(date: Date, range: DateRange | null): boolean {
+  if (!range) return true;
+  const endExclusive = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1);
+  return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
+}
+
 function buildPromptRankings(
   primaryRuns: RunData[],
   matchesPlatform: (r: RawResponseData) => boolean,
+  benchmarkPositions: Map<string, number | null>,
 ): PromptRankRow[] {
   const acc = new Map<
     string,
@@ -98,15 +107,34 @@ function buildPromptRankings(
     }
   }
   return Array.from(acc.entries())
-    .map(([key, p]) => ({
-      key,
-      text: p.text,
-      category: p.category,
-      checks: p.checks,
-      mentioned: p.mentioned,
-      visibilityPct: p.checks ? (p.mentioned / p.checks) * 100 : 0,
-      avgRank: p.ranks.length ? p.ranks.reduce((a, c) => a + c, 0) / p.ranks.length : null,
-    }))
+    .map(([key, p]) => {
+      const avgRank = p.ranks.length ? p.ranks.reduce((a, c) => a + c, 0) / p.ranks.length : null;
+      const hasBenchmarkEntry = benchmarkPositions.has(key);
+      const benchmarkPosition = benchmarkPositions.get(key) ?? null;
+      let movement: number | null = null;
+      let benchmarkStatus: PromptRankRow["benchmarkStatus"] = "none";
+      if (hasBenchmarkEntry) {
+        if (benchmarkPosition != null && avgRank != null) {
+          movement = benchmarkPosition - avgRank; // positive = moved up (improved)
+          benchmarkStatus = "tracked";
+        } else if (benchmarkPosition == null && avgRank != null) {
+          benchmarkStatus = "new"; // unranked in the benchmark, ranked now
+        } else {
+          benchmarkStatus = "tracked"; // in the benchmark, still unranked now -- no movement to show
+        }
+      }
+      return {
+        key,
+        text: p.text,
+        category: p.category,
+        checks: p.checks,
+        mentioned: p.mentioned,
+        visibilityPct: p.checks ? (p.mentioned / p.checks) * 100 : 0,
+        avgRank,
+        movement,
+        benchmarkStatus,
+      };
+    })
     .sort((a, b) => b.visibilityPct - a.visibilityPct);
 }
 
@@ -126,16 +154,46 @@ function buildDashboardData(
   const primaryRuns = completeRuns.filter((run) => inWindow(run, dateRange));
   const comparisonRuns = comparisonRange ? completeRuns.filter((run) => inWindow(run, comparisonRange)) : [];
 
-  const trendPoints: TrendPoint[] = [];
+  // Benchmark snapshots in range are the start of the real timeline, not a
+  // separate thing -- merged chronologically into the same trend series
+  // (flagged isBenchmark so the chart can style the point distinctly) and
+  // used below to compute each prompt's movement since the baseline.
+  const benchmarksInRange = client.benchmarkSnapshots.filter((s) => inDateWindow(s.snapshotDate, dateRange));
+
+  type DatedPoint = { date: number; point: TrendPoint };
+  const datedPoints: DatedPoint[] = [];
+  for (const snap of benchmarksInRange) {
+    datedPoints.push({
+      date: snap.snapshotDate.getTime(),
+      point: {
+        runId: `benchmark:${snap.id}`,
+        dateLabel: snap.snapshotDate.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
+        value: snap.ownVisibilityPct ?? 0,
+        isBenchmark: true,
+      },
+    });
+  }
   for (const run of primaryRuns) {
     const matching = run.rawResponses.filter(matchesPlatform);
     if (matching.length === 0) continue;
     const mentioned = matching.filter((r) => r.parsedResult?.clientBrandMentioned).length;
-    trendPoints.push({
-      runId: run.id,
-      dateLabel: run.startedAt.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      value: (mentioned / matching.length) * 100,
+    datedPoints.push({
+      date: run.startedAt.getTime(),
+      point: {
+        runId: run.id,
+        dateLabel: run.startedAt.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        value: (mentioned / matching.length) * 100,
+      },
     });
+  }
+  const trendPoints: TrendPoint[] = datedPoints.sort((a, b) => a.date - b.date).map((d) => d.point);
+
+  // Most-recent-in-range benchmark wins per prompt if there's ever more than one.
+  const benchmarkPositions = new Map<string, number | null>();
+  for (const snap of benchmarksInRange) {
+    for (const p of snap.prompts) {
+      benchmarkPositions.set(p.promptText.trim().toLowerCase(), p.position);
+    }
   }
 
   const primaryMatching = primaryRuns.flatMap((run) => run.rawResponses.filter(matchesPlatform));
@@ -207,7 +265,7 @@ function buildDashboardData(
     })
     .sort((a, b) => b.appearances - a.appearances);
 
-  const promptRankings = buildPromptRankings(primaryRuns, matchesPlatform);
+  const promptRankings = buildPromptRankings(primaryRuns, matchesPlatform, benchmarkPositions);
 
   return {
     platformsAvailable,
@@ -218,6 +276,7 @@ function buildDashboardData(
     totalResponses,
     brandTable,
     promptRankings,
+    benchmarksInRange,
   };
 }
 
@@ -259,6 +318,7 @@ export default async function ClientRankingsPage({
     totalResponses,
     brandTable,
     promptRankings,
+    benchmarksInRange,
   } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
 
   const scoreDelta =
@@ -338,6 +398,7 @@ export default async function ClientRankingsPage({
                         <th className="px-4 py-2 font-medium">Prompt</th>
                         <th className="px-4 py-2 font-medium tabular-nums">Visibility</th>
                         <th className="px-4 py-2 font-medium tabular-nums">Avg Rank</th>
+                        <th className="px-4 py-2 font-medium tabular-nums">Movement</th>
                         <th className="px-4 py-2 font-medium tabular-nums">Checks</th>
                       </tr>
                     </thead>
@@ -347,6 +408,30 @@ export default async function ClientRankingsPage({
                           <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{p.text}</td>
                           <td className="px-4 py-2 tabular-nums">{p.visibilityPct.toFixed(0)}%</td>
                           <td className="px-4 py-2 tabular-nums">{p.avgRank != null ? p.avgRank.toFixed(1) : "—"}</td>
+                          <td className="px-4 py-2 tabular-nums">
+                            {p.benchmarkStatus === "none" ? (
+                              <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                            ) : p.benchmarkStatus === "new" ? (
+                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                New
+                              </span>
+                            ) : p.movement == null ? (
+                              <span className="text-zinc-400 dark:text-zinc-600">–</span>
+                            ) : (
+                              <span
+                                className={
+                                  p.movement > 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : p.movement < 0
+                                      ? "text-red-600 dark:text-red-400"
+                                      : "text-zinc-400 dark:text-zinc-600"
+                                }
+                              >
+                                {p.movement > 0 ? "▲" : p.movement < 0 ? "▼" : "–"}{" "}
+                                {p.movement !== 0 ? Math.abs(p.movement).toFixed(1) : ""}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-2 tabular-nums">{p.checks}</td>
                         </tr>
                       ))}
@@ -433,23 +518,24 @@ export default async function ClientRankingsPage({
         </p>
       </section>
 
-      {client.benchmarkSnapshots.length > 0 && (
+      {benchmarksInRange.length > 0 && (
         <section className="mt-8">
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Historical Benchmark
+            Benchmark Competitor Baseline
           </h2>
           <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-            Imported from a prior report, not from a tracked run — a reference point, not additional live data.
+            Competitor standing as of the baseline date (shown on the Visibility chart above). Prompt-level baseline
+            movement is now shown inline in Prompt Rankings above.
           </p>
           <div className="space-y-6">
-            {client.benchmarkSnapshots.map((snap) => (
+            {benchmarksInRange.map((snap) => (
               <div
                 key={snap.id}
                 className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/40"
               >
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                   <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {snap.source} benchmark — {snap.snapshotDate.toLocaleDateString(undefined, {
+                    {snap.source} baseline — {snap.snapshotDate.toLocaleDateString(undefined, {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
@@ -463,33 +549,6 @@ export default async function ClientRankingsPage({
                     {snap.ownSentiment != null && <span>Sentiment: {snap.ownSentiment}/100</span>}
                   </div>
                 </div>
-
-                {snap.prompts.length > 0 && (
-                  <div className="mb-4 overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-sm">
-                      <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                        <tr>
-                          <th className="px-3 py-1.5 font-medium">Prompt</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Sentiment</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Visibility</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                        {snap.prompts.map((p) => (
-                          <tr key={p.id} className="bg-white dark:bg-zinc-950">
-                            <td className="px-3 py-1.5 text-zinc-700 dark:text-zinc-300">{p.promptText}</td>
-                            <td className="px-3 py-1.5 tabular-nums">{p.position ?? "—"}</td>
-                            <td className="px-3 py-1.5 tabular-nums">{p.sentiment ?? "—"}</td>
-                            <td className="px-3 py-1.5 tabular-nums">
-                              {p.visibilityPct != null ? `${p.visibilityPct}%` : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
 
                 {snap.competitors.length > 0 && (
                   <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
