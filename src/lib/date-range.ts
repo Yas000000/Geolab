@@ -170,6 +170,16 @@ export function parseISODate(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
-export function formatDisplayDate(d: Date): string {
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+// `utc`: pin formatting to UTC for a Date whose calendar day was already
+// fixed server-side (e.g. a prop computed once in a Server Component, like
+// the picker's allTimeRange) -- without this, SSR (Vercel runs in UTC) and
+// client hydration (the browser's real local timezone) can format the same
+// underlying instant as different calendar days, which React detects as a
+// hydration mismatch (error #418), not just a cosmetic off-by-one. Leave
+// false (the default) for a Date built via parseISODate() from a URL param --
+// those are self-consistently "local" on both the server and the client
+// since both sides construct AND format in their own local terms, so no pin
+// is needed or correct there.
+export function formatDisplayDate(d: Date, utc = false): string {
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: utc ? "UTC" : undefined });
 }

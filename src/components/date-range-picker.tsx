@@ -285,12 +285,16 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
   // design -- filtering logic elsewhere is unaffected), so the caller can
   // optionally pass the real earliest-to-latest span of its own data via
   // allTimeRange purely for this display -- never used for filtering.
-  const appliedPrimaryRange: DateRange | null =
-    appliedStart && appliedEnd
-      ? { start: parseISODate(appliedStart), end: parseISODate(appliedEnd) }
-      : appliedPreset === "allTime"
-        ? (allTimeRange ?? null)
-        : null;
+  const primaryRangeFromUrl = appliedStart && appliedEnd;
+  const appliedPrimaryRange: DateRange | null = primaryRangeFromUrl
+    ? { start: parseISODate(appliedStart), end: parseISODate(appliedEnd) }
+    : appliedPreset === "allTime"
+      ? (allTimeRange ?? null)
+      : null;
+  // allTimeRange is a Date computed once server-side and passed as a prop --
+  // see formatDisplayDate()'s own doc comment for why that specifically
+  // needs timeZone pinned to avoid a real SSR/hydration mismatch.
+  const primaryRangeIsServerProvided = !primaryRangeFromUrl;
   const appliedCompareMode = (searchParams.get("compare") as CompareMode) || "none";
   const appliedCompareStartParam = searchParams.get("compareStart");
   const appliedCompareEndParam = searchParams.get("compareEnd");
@@ -319,7 +323,8 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
         <div className="mt-1 whitespace-nowrap text-right text-[11px] leading-tight text-zinc-500 dark:text-zinc-500">
           {appliedPrimaryRange && (
             <div>
-              {formatDisplayDate(appliedPrimaryRange.start)} – {formatDisplayDate(appliedPrimaryRange.end)}
+              {formatDisplayDate(appliedPrimaryRange.start, primaryRangeIsServerProvided)} –{" "}
+              {formatDisplayDate(appliedPrimaryRange.end, primaryRangeIsServerProvided)}
             </div>
           )}
           {resolvedCompareRange && (
