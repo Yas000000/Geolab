@@ -17,7 +17,22 @@ export function RunNowButton({ clientId }: { clientId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ liveSearch: mode === "live" }),
       });
-      const data = await res.json();
+      // A platform-level timeout kills the function before it ever returns
+      // JSON (a plain-text/HTML error body instead), which throws here --
+      // confirmed live on a real Live Search run that ran past 300s. Give a
+      // clear message instead of surfacing the raw "JSON.parse: unexpected
+      // character" browser error.
+      let data: { runId?: string; error?: string };
+      try {
+        data = await res.json();
+      } catch {
+        setError(
+          "The run didn't respond in time (it may still be running server-side). Refresh Run History below in a " +
+            "few minutes before trying again.",
+        );
+        setRunning(null);
+        return;
+      }
       if (!res.ok) {
         setError(data.error ?? "The run failed. Check Vercel logs for details.");
         setRunning(null);

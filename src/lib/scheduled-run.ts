@@ -36,15 +36,33 @@ export type RunReusingPromptsResult =
  * (a button a person is waiting on) can show why it didn't run, not just
  * silently do nothing the way the cron path's log-and-return is fine with.
  */
+// Comfortably above this route's own maxDuration (300s) and the queue
+// consumer's -- a RUNNING/PENDING row older than this was, in practice,
+// killed by the platform's own timeout without ever reaching its own
+// catch block (confirmed live: a real Live Search run on 55 prompts hit
+// this exact scenario, 2026-10-12, left stuck at RUNNING with 0 persisted
+// responses, requiring a manual DB fix to unblock future runs). Self-heal
+// instead of requiring that every time.
+const STALE_RUN_MS = 10 * 60 * 1000;
+
 async function runClientReusingPrompts(
   clientId: string,
   triggeredBy: string,
   liveSearch: boolean,
 ): Promise<RunReusingPromptsResult> {
-  const alreadyRunning = await prisma.run.findFirst({
+  const inProgress = await prisma.run.findFirst({
     where: { clientId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
   });
-  if (alreadyRunning) return { ok: false, reason: "already_running" };
+  if (inProgress) {
+    const age = Date.now() - inProgress.startedAt.getTime();
+    if (age < STALE_RUN_MS) return { ok: false, reason: "already_running" };
+    // Stale -- almost certainly orphaned by a platform-level timeout, not a
+    // real in-flight run. Mark it FAILED so it stops blocking, then proceed.
+    await prisma.run.update({
+      where: { id: inProgress.id },
+      data: { status: RunStatus.FAILED, completedAt: new Date() },
+    });
+  }
 
   const brand = await prisma.brand.findFirst({ where: { clientId, isClientBrand: true } });
   if (!brand) return { ok: false, reason: "no_brand" };

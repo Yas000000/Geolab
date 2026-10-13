@@ -11,7 +11,15 @@ from python_pipeline.brand_extractor import extract_brands
 app = FastAPI()
 
 DEFAULT_PLATFORMS = ["openai", "claude", "gemini"]
-PER_PROVIDER_CONCURRENCY = 5
+# Raised from 5 -- confirmed live (2026-10-12) that a real Live Search run
+# (55 prompts, concurrency 5) exceeded this route's 300s maxDuration and got
+# hard-killed by the platform before completing (Training Search on the same
+# 55 prompts finished in ~140s at the old concurrency, so Live Search's real
+# web-search round-trips are the bottleneck, not raw model latency). Higher
+# concurrency directly cuts the number of sequential batches per platform
+# (55 prompts / N concurrent); no evidence yet this trips provider rate
+# limits, but per-call errors are already handled gracefully if it does.
+PER_PROVIDER_CONCURRENCY = 15
 DEFAULT_CATEGORY = "general"
 
 
