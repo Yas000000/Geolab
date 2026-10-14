@@ -22,6 +22,7 @@ export function ClientSettingsForm({
   const [gscSiteUrl, setGscSiteUrl] = useState(initialGscSiteUrl);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [importingHistory, setImportingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Same pattern as clients/new/page.tsx -- lets the GA4/GSC fields be
@@ -69,6 +70,7 @@ export function ClientSettingsForm({
       }
       setSaving(false);
       setSaved(true);
+      setImportingHistory(Boolean(data.importingHistory));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSaving(false);
@@ -154,7 +156,11 @@ export function ClientSettingsForm({
         >
           {saving ? "Saving…" : "Save"}
         </button>
-        {saved && <span className="text-sm text-emerald-600 dark:text-emerald-400">Saved</span>}
+        {saved && (
+          <span className="text-sm text-emerald-600 dark:text-emerald-400">
+            Saved{importingHistory ? ". Importing Google history in the background; refresh in a minute." : ""}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunStatus, RunSchedule } from "@/generated/prisma/client";
 import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@/lib/run-persistence";
 import { parsePromptsText } from "@/lib/parse-prompts";
@@ -37,6 +39,9 @@ export async function POST(request: Request): Promise<Response> {
     gscSiteUrl: body.gscSiteUrl,
   });
   const brand = await findOrCreateBrand(client.id, brandName, true);
+  // Import GA4/Search Console history once the response is sent, so the
+  // Traffic page has real history from day one (see /api/clients/[id] PATCH).
+  if (client.ga4PropertyId || client.gscSiteUrl) after(importHistoryForClient(client.id));
 
   const promptSet = await prisma.promptSet.create({
     data: {

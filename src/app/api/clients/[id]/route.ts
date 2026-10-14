@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunSchedule } from "@/generated/prisma/client";
 
 export const runtime = "nodejs";
@@ -32,5 +34,13 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
     },
   });
 
-  return Response.json({ client: updated });
+  // A newly set or changed GA4 property / Search Console site gets its
+  // history imported right away, after the response -- otherwise the
+  // Traffic page only fills in one day per daily pull.
+  const analyticsChanged =
+    (updated.ga4PropertyId && updated.ga4PropertyId !== client.ga4PropertyId) ||
+    (updated.gscSiteUrl && updated.gscSiteUrl !== client.gscSiteUrl);
+  if (analyticsChanged) after(importHistoryForClient(id));
+
+  return Response.json({ client: updated, importingHistory: Boolean(analyticsChanged) });
 }

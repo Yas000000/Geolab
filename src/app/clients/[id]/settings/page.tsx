@@ -7,8 +7,38 @@ import { RunNowButton } from "@/components/run-now-button";
 import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
 import { formatPromptsText } from "@/lib/parse-prompts";
+import { AnalyticsImportButton } from "@/components/analytics-import-button";
 
 export const dynamic = "force-dynamic";
+
+// Snapshot dates are UTC-midnight, one row per day -- format in UTC, and
+// on the server only (passed down as plain strings), so the browser's own
+// timezone can't shift the day or cause a hydration mismatch.
+function utcDay(d: Date) {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+async function getAnalyticsCoverage(clientId: string, hasGa4: boolean, hasGsc: boolean): Promise<string[]> {
+  const [ga4, gsc] = await Promise.all([
+    prisma.analyticsSnapshot.aggregate({
+      where: { clientId, sessions: { not: null } },
+      _count: true,
+      _min: { date: true },
+      _max: { date: true },
+    }),
+    prisma.searchConsoleSnapshot.aggregate({
+      where: { clientId, clicks: { not: null } },
+      _count: true,
+      _min: { date: true },
+      _max: { date: true },
+    }),
+  ]);
+  const line = (label: string, agg: typeof ga4) =>
+    agg._count && agg._min.date && agg._max.date
+      ? `${label}: ${agg._count} days (${utcDay(agg._min.date)} to ${utcDay(agg._max.date)})`
+      : `${label}: no data yet`;
+  return [...(hasGa4 ? [line("Google Analytics", ga4)] : []), ...(hasGsc ? [line("Search Console", gsc)] : [])];
+}
 
 async function getClient(id: string) {
   return prisma.client.findUnique({
@@ -36,6 +66,10 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   const client = await getClient(id);
   if (!client) notFound();
   const trackedPromptSet = await getTrackedPromptSet(id);
+  const analyticsCoverage =
+    client.ga4PropertyId || client.gscSiteUrl
+      ? await getAnalyticsCoverage(id, Boolean(client.ga4PropertyId), Boolean(client.gscSiteUrl))
+      : null;
 
   return (
     <div>
@@ -73,6 +107,11 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             initialGa4PropertyId={client.ga4PropertyId ?? ""}
             initialGscSiteUrl={client.gscSiteUrl ?? ""}
           />
+          {analyticsCoverage && (
+            <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-900">
+              <AnalyticsImportButton clientId={id} coverage={analyticsCoverage} />
+            </div>
+          )}
         </div>
       </section>
 

@@ -1,5 +1,6 @@
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
 import type { OAuth2Client } from "google-auth-library";
+import { ga4DayKey, normalizeGa4PropertyId, runReportAllRows, toApiDate } from "@/lib/google-metrics";
 
 export interface AiTrafficBreakdown {
   directSessions: number | null;
@@ -43,70 +44,93 @@ function matchesAiPlatform(value: string | null | undefined): boolean {
   return AI_PLATFORM_PATTERN.test(value);
 }
 
-function normalizePropertyId(raw: string): string {
-  return raw.startsWith("properties/") ? raw : `properties/${raw}`;
-}
-
-function toApiDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
 /**
- * Three GA4 Data API calls for one client/range: the native channel-group
- * totals (Direct/AI Assistant/Referral/Unassigned, confirmed live to be
- * real enum values returned by sessionDefaultChannelGroup -- an earlier doc
- * summary wrongly claimed they weren't), then a drill-down into Referral's
- * sources and Unassigned's mediums to find the AI-attributable subset of
- * each. Referral and Unassigned are catch-all buckets, not AI-specific --
+ * Three GA4 Data API calls for one client/range, each split by day (`date`
+ * dimension), keyed "YYYY-MM-DD": the native channel-group totals
+ * (Direct/AI Assistant/Referral/Unassigned, confirmed live to be real enum
+ * values returned by sessionDefaultChannelGroup -- an earlier doc summary
+ * wrongly claimed they weren't), then a drill-down into Referral's sources
+ * and Unassigned's mediums to find the AI-attributable subset of each.
+ * Referral and Unassigned are catch-all buckets, not AI-specific --
  * live-verified on real data that most of their volume is NOT AI traffic
  * (SignUp: 0.0% of Referral, 0.07% of Unassigned), so the whole-bucket
  * totals are stored for context but the *Ai subfields are the real signal.
  *
- * startDate/endDate instead of a single day so this same function covers
- * both the daily cron (caller passes the same date twice) and a one-off
- * multi-month report pull (e.g. geo-monthly-report) without a second
- * near-duplicate implementation.
+ * One call covers any range, from the daily pull's rolling window to a
+ * 16-month history import. Every query goes through runReportAllRows: the
+ * Data API defaults to a 10,000-row limit with NO row ordering when unset
+ * -- live-confirmed SignUp's Referral channel alone has 14,475+ distinct
+ * sources within a single quarter, so the unpaginated default silently
+ * dropped an unknown slice of rows (a real undercount this project shipped
+ * before catching it), and day x source rows multiply that further.
  *
- * Same null-on-no-data / throw-on-error contract as fetchGa4DailyMetrics in
- * google-metrics.ts, so the caller's existing auth-error handling (the cron
- * route's isAuthError short-circuit) keeps working unchanged.
+ * Days with no sessions at all are absent, not zero-filled (same reasoning
+ * as fetchGa4DailySeries). Throws on error so the caller's auth-error
+ * handling (isAuthError) keeps working.
  */
-export async function fetchAiTrafficBreakdown(
+export async function fetchAiTrafficDailySeries(
   authClient: OAuth2Client,
   propertyId: string,
   startDate: Date,
-  endDate: Date = startDate,
-): Promise<AiTrafficBreakdown | null> {
+  endDate: Date,
+): Promise<Map<string, AiTrafficBreakdown>> {
   try {
     const client = new BetaAnalyticsDataClient({ authClient });
-    const property = normalizePropertyId(propertyId);
+    const property = normalizeGa4PropertyId(propertyId);
     const dateRanges = [{ startDate: toApiDate(startDate), endDate: toApiDate(endDate) }];
+    const day = (row: { dimensionValues?: { value?: string | null }[] | null }) =>
+      ga4DayKey(row.dimensionValues?.[0]?.value ?? "");
+    const sessionsOf = (row: { metricValues?: { value?: string | null }[] | null }) =>
+      parseInt(row.metricValues?.[0]?.value ?? "0", 10);
 
-    const [channelResponse] = await client.runReport({
+    const channelRows = await runReportAllRows(client, {
       property,
       dateRanges,
-      dimensions: [{ name: "sessionDefaultChannelGroup" }],
+      dimensions: [{ name: "date" }, { name: "sessionDefaultChannelGroup" }],
       metrics: [{ name: "sessions" }],
     });
 
-    const totals: Record<string, number> = {};
-    for (const row of channelResponse.rows ?? []) {
-      const group = row.dimensionValues?.[0]?.value ?? "";
-      const sessions = parseInt(row.metricValues?.[0]?.value ?? "0", 10);
-      totals[group] = sessions;
+    const series = new Map<string, AiTrafficBreakdown>();
+    const entry = (key: string) => {
+      let e = series.get(key);
+      if (!e) {
+        e = {
+          directSessions: 0,
+          aiAssistantSessions: 0,
+          referralSessions: 0,
+          referralAiSessions: 0,
+          unassignedSessions: 0,
+          unassignedAiSessions: 0,
+        };
+        series.set(key, e);
+      }
+      return e;
+    };
+    for (const row of channelRows) {
+      const e = entry(day(row));
+      const sessions = sessionsOf(row);
+      switch (row.dimensionValues?.[1]?.value) {
+        case "Direct":
+          e.directSessions = sessions;
+          break;
+        case "AI Assistant":
+          e.aiAssistantSessions = sessions;
+          break;
+        case "Referral":
+          e.referralSessions = sessions;
+          break;
+        case "Unassigned":
+          e.unassignedSessions = sessions;
+          break;
+      }
     }
 
-    const directSessions = totals["Direct"] ?? 0;
-    const aiAssistantSessions = totals["AI Assistant"] ?? 0;
-    const referralSessions = totals["Referral"] ?? 0;
-    const unassignedSessions = totals["Unassigned"] ?? 0;
-
-    let referralAiSessions = 0;
-    if (referralSessions > 0) {
-      const [referralResponse] = await client.runReport({
+    const anyReferral = [...series.values()].some((e) => (e.referralSessions ?? 0) > 0);
+    if (anyReferral) {
+      const referralRows = await runReportAllRows(client, {
         property,
         dateRanges,
-        dimensions: [{ name: "sessionSource" }],
+        dimensions: [{ name: "date" }, { name: "sessionSource" }],
         metrics: [{ name: "sessions" }],
         dimensionFilter: {
           filter: {
@@ -114,31 +138,21 @@ export async function fetchAiTrafficBreakdown(
             stringFilter: { matchType: "EXACT", value: "Referral" },
           },
         },
-        // The Data API defaults to a 10,000-row limit with NO row ordering
-        // when both are unspecified -- live-confirmed SignUp's Referral
-        // channel alone has 14,475+ distinct sources even within a single
-        // quarter, so the unordered default silently dropped an unknown,
-        // non-smallest-first slice of rows (a real undercount this project
-        // shipped before catching it). orderBys descending means any rows
-        // still cut by the 100k cap are the smallest contributors, not
-        // arbitrary ones.
-        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        limit: 100000,
       });
-      for (const row of referralResponse.rows ?? []) {
-        const source = row.dimensionValues?.[0]?.value;
-        if (matchesAiPlatform(source)) {
-          referralAiSessions += parseInt(row.metricValues?.[0]?.value ?? "0", 10);
+      for (const row of referralRows) {
+        if (matchesAiPlatform(row.dimensionValues?.[1]?.value)) {
+          const e = entry(day(row));
+          e.referralAiSessions = (e.referralAiSessions ?? 0) + sessionsOf(row);
         }
       }
     }
 
-    let unassignedAiSessions = 0;
-    if (unassignedSessions > 0) {
-      const [unassignedResponse] = await client.runReport({
+    const anyUnassigned = [...series.values()].some((e) => (e.unassignedSessions ?? 0) > 0);
+    if (anyUnassigned) {
+      const unassignedRows = await runReportAllRows(client, {
         property,
         dateRanges,
-        dimensions: [{ name: "sessionMedium" }],
+        dimensions: [{ name: "date" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }],
         dimensionFilter: {
           filter: {
@@ -146,27 +160,16 @@ export async function fetchAiTrafficBreakdown(
             stringFilter: { matchType: "EXACT", value: "Unassigned" },
           },
         },
-        // Same truncation risk as the Referral query above, even though
-        // sessionMedium's cardinality is usually much lower -- see comment there.
-        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        limit: 100000,
       });
-      for (const row of unassignedResponse.rows ?? []) {
-        const medium = row.dimensionValues?.[0]?.value;
-        if (matchesAiPlatform(medium)) {
-          unassignedAiSessions += parseInt(row.metricValues?.[0]?.value ?? "0", 10);
+      for (const row of unassignedRows) {
+        if (matchesAiPlatform(row.dimensionValues?.[1]?.value)) {
+          const e = entry(day(row));
+          e.unassignedAiSessions = (e.unassignedAiSessions ?? 0) + sessionsOf(row);
         }
       }
     }
 
-    return {
-      directSessions,
-      aiAssistantSessions,
-      referralSessions,
-      referralAiSessions,
-      unassignedSessions,
-      unassignedAiSessions,
-    };
+    return series;
   } catch (err) {
     console.log(`[ai-traffic] GA4 fetch failed for property ${propertyId}: ${err instanceof Error ? err.message : err}`);
     throw err;

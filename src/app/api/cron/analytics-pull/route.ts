@@ -1,21 +1,17 @@
 import { prisma } from "@/lib/prisma";
 import { getGoogleOAuthClient, isAuthError, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
-import { fetchGa4DailyMetrics, fetchGscDailyMetrics } from "@/lib/google-metrics";
-import { fetchAiTrafficBreakdown } from "@/lib/ai-traffic";
+import { ROLLING_DAYS, syncClientAnalytics, utcDaysAgo } from "@/lib/analytics-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-function yesterday(): Date {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
-}
-
 /**
  * Daily pull of GA4/GSC metrics for every client with a property configured.
+ * Re-pulls the last ROLLING_DAYS days rather than just yesterday: pulling
+ * only yesterday left Search Console permanently empty (it publishes data
+ * 2-3 days late, so "yesterday" always came back with no rows and was never
+ * revisited -- confirmed on Yellowbrick's real data, 2026-10-14).
  * Not gated by Client.schedule (unlike cron/nightly) -- these calls are free
  * and fast, so every configured client gets pulled regardless of its
  * separate GEO-check cadence. No Queues fan-out needed either -- confirmed
@@ -40,41 +36,14 @@ export async function GET(request: Request): Promise<Response> {
     select: { id: true, ga4PropertyId: true, gscSiteUrl: true },
   });
 
-  const date = yesterday();
+  const startDate = utcDaysAgo(ROLLING_DAYS);
+  const endDate = utcDaysAgo(1);
   let pulled = 0;
   let skipped = 0;
 
   for (const client of clients) {
     try {
-      if (client.ga4PropertyId) {
-        const metrics = await fetchGa4DailyMetrics(oauthClient, client.ga4PropertyId, date);
-        if (metrics) {
-          await prisma.analyticsSnapshot.upsert({
-            where: { clientId_date: { clientId: client.id, date } },
-            create: { clientId: client.id, date, ...metrics },
-            update: metrics,
-          });
-        }
-
-        const aiTraffic = await fetchAiTrafficBreakdown(oauthClient, client.ga4PropertyId, date);
-        if (aiTraffic) {
-          await prisma.aiTrafficSnapshot.upsert({
-            where: { clientId_date: { clientId: client.id, date } },
-            create: { clientId: client.id, date, ...aiTraffic },
-            update: aiTraffic,
-          });
-        }
-      }
-      if (client.gscSiteUrl) {
-        const metrics = await fetchGscDailyMetrics(oauthClient, client.gscSiteUrl, date);
-        if (metrics) {
-          await prisma.searchConsoleSnapshot.upsert({
-            where: { clientId_date: { clientId: client.id, date } },
-            create: { clientId: client.id, date, ...metrics },
-            update: metrics,
-          });
-        }
-      }
+      await syncClientAnalytics(oauthClient, client, startDate, endDate);
       pulled++;
     } catch (err) {
       if (isAuthError(err)) {
