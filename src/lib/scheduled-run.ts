@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { RunStatus } from "@/generated/prisma/client";
 import { callPipelineAndPersist } from "@/lib/run-persistence";
+import { getTrackedPromptSet } from "@/lib/tracked-prompts";
 
 /**
  * No inbound Request is available here (this runs from a queue consumer,
@@ -71,17 +72,7 @@ async function runClientReusingPrompts(
   if (!client) return { ok: false, reason: "client_not_found" };
   if (!client.domain) return { ok: false, reason: "no_domain" };
 
-  // Filtered to PromptSets that actually have prompts, not just the most
-  // recent by creation time -- a prior scheduled attempt that failed AFTER
-  // creating its own PromptSet but BEFORE the pipeline call persisted any
-  // Prompt rows (e.g. a network/auth error) leaves an empty PromptSet
-  // behind that would otherwise shadow the real one. Confirmed live: this
-  // exact shadowing happened after an earlier failed run in this project.
-  const latestPromptSet = await prisma.promptSet.findFirst({
-    where: { clientId, prompts: { some: {} } },
-    orderBy: { createdAt: "desc" },
-    include: { prompts: { orderBy: { position: "asc" } } },
-  });
+  const latestPromptSet = await getTrackedPromptSet(clientId);
   if (!latestPromptSet || latestPromptSet.prompts.length === 0) return { ok: false, reason: "no_prompts" };
 
   const promptSet = await prisma.promptSet.create({

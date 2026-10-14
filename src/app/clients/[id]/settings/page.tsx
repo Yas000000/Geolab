@@ -4,6 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { ClientSettingsForm } from "@/components/client-settings-form";
 import { RunNowButton } from "@/components/run-now-button";
+import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
+import { getTrackedPromptSet } from "@/lib/tracked-prompts";
+import { formatPromptsText } from "@/lib/parse-prompts";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +35,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   const { id } = await params;
   const client = await getClient(id);
   if (!client) notFound();
+  const trackedPromptSet = await getTrackedPromptSet(id);
 
   return (
     <div>
@@ -46,6 +50,15 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
           <RunNowButton clientId={id} />
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Tracked Prompts
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <TrackedPromptsEditor clientId={id} initialText={formatPromptsText(trackedPromptSet?.prompts ?? [])} />
         </div>
       </section>
 

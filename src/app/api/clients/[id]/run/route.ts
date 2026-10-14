@@ -9,7 +9,7 @@ const REASON_MESSAGE: Record<string, string> = {
   no_brand: "No tracked brand found for this client.",
   client_not_found: "Client not found.",
   no_domain: "This client has no domain set -- add one in Settings first.",
-  no_prompts: "No prior prompts found to reuse -- this client has never completed a run.",
+  no_prompts: "This client has no tracked prompts yet -- add some under Tracked Prompts below.",
 };
 
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/run">): Promise<Response> {

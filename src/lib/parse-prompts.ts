@@ -32,3 +32,58 @@ export function parsePromptsText(raw: string): ParsedPrompt[] {
 
   return prompts;
 }
+
+/** Identity used to compare prompts across lists -- the same key the Rankings page groups by. */
+export function promptKey(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/**
+ * Drops repeat prompts (case-insensitive text match, first occurrence
+ * wins), regardless of category. Stricter than the Python pipeline's own
+ * (category, text) dedup on purpose: the Rankings page keys rows by prompt
+ * text alone, so the same text under two categories would silently merge
+ * into one row there anyway.
+ */
+export function dedupePrompts(prompts: ParsedPrompt[]): { prompts: ParsedPrompt[]; duplicates: number } {
+  const seen = new Set<string>();
+  const unique: ParsedPrompt[] = [];
+  for (const p of prompts) {
+    const key = promptKey(p.text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(p);
+  }
+  return { prompts: unique, duplicates: prompts.length - unique.length };
+}
+
+/**
+ * Inverse of parsePromptsText: renders a stored prompt list back into the
+ * pasteable `## Category` format, so it can be edited and re-saved without
+ * changing anything. A leading "General" group gets no header, since
+ * parsePromptsText already defaults header-less lines to "General".
+ */
+export function formatPromptsText(prompts: { category: string | null; text: string }[]): string {
+  const blocks: string[] = [];
+  let currentCategory: string | null = null;
+  let lines: string[] = [];
+
+  const flush = () => {
+    if (lines.length === 0) return;
+    const header = blocks.length === 0 && currentCategory === DEFAULT_CATEGORY ? [] : [`## ${currentCategory}`];
+    blocks.push([...header, ...lines].join("\n"));
+    lines = [];
+  };
+
+  for (const p of prompts) {
+    const category = p.category || DEFAULT_CATEGORY;
+    if (category !== currentCategory) {
+      flush();
+      currentCategory = category;
+    }
+    lines.push(p.text);
+  }
+  flush();
+
+  return blocks.join("\n\n");
+}
