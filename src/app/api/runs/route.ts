@@ -4,7 +4,7 @@ import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 800; // Pro plan ceiling -- runs wait on the full Python pipeline call
 
 interface RunsRequestBody {
   clientName: string;

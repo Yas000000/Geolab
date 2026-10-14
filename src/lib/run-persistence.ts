@@ -2,6 +2,15 @@ import { prisma } from "@/lib/prisma";
 import { Platform, RunStatus } from "@/generated/prisma/client";
 import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-platform-map";
 import { resolveBrandNames } from "@/lib/brand-resolution";
+import { Agent, fetch as undiciFetch } from "undici";
+
+// The Python pipeline replies only once the whole run is done, so no
+// response headers arrive until then. Node's built-in fetch gives up after
+// 300s without headers (undici's default headersTimeout/bodyTimeout) --
+// that would silently cap every run at 300s even though the run routes'
+// maxDuration is 800s (Pro plan). Set just above 800s so the platform's
+// own duration limit, not this client, is what ends a stuck call.
+const pipelineAgent = new Agent({ headersTimeout: 900_000, bodyTimeout: 900_000 });
 
 interface PipelinePromptGroup {
   category: string;
@@ -83,10 +92,11 @@ export async function callPipelineAndPersist(params: {
 
   let pipeline: PipelineResponse;
   try {
-    const res = await fetch(pipelineUrl, {
+    const res = await undiciFetch(pipelineUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(pipelineBody),
+      dispatcher: pipelineAgent,
     });
     if (!res.ok) {
       throw new Error(`run_pipeline returned ${res.status}: ${await res.text()}`);

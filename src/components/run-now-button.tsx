@@ -19,7 +19,8 @@ export function RunNowButton({ clientId }: { clientId: string }) {
       });
       // A platform-level timeout kills the function before it ever returns
       // JSON (a plain-text/HTML error body instead), which throws here --
-      // confirmed live on a real Live Search run that ran past 300s. Give a
+      // confirmed live on a real Live Search run that ran past the (then)
+      // 300s limit, now 800s on the Pro plan. Give a
       // clear message instead of surfacing the raw "JSON.parse: unexpected
       // character" browser error.
       let data: { runId?: string; error?: string };
@@ -77,7 +78,7 @@ export function RunNowButton({ clientId }: { clientId: string }) {
       {running && (
         <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
           Running the prompts across all tracked platforms{running === "live" ? " with live web search" : ""}… this
-          usually takes 1-3 minutes.
+          usually takes {running === "live" ? "3-10" : "1-3"} minutes.
         </div>
       )}
 

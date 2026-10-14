@@ -37,14 +37,15 @@ export type RunReusingPromptsResult =
  * (a button a person is waiting on) can show why it didn't run, not just
  * silently do nothing the way the cron path's log-and-return is fine with.
  */
-// Comfortably above this route's own maxDuration (300s) and the queue
-// consumer's -- a RUNNING/PENDING row older than this was, in practice,
+// Comfortably above this route's own maxDuration (800s, Pro plan) and the
+// queue consumer's -- must stay above it, or a slow-but-alive run would be
+// marked FAILED mid-flight. A RUNNING/PENDING row older than this was, in practice,
 // killed by the platform's own timeout without ever reaching its own
 // catch block (confirmed live: a real Live Search run on 55 prompts hit
 // this exact scenario, 2026-10-12, left stuck at RUNNING with 0 persisted
 // responses, requiring a manual DB fix to unblock future runs). Self-heal
 // instead of requiring that every time.
-const STALE_RUN_MS = 10 * 60 * 1000;
+const STALE_RUN_MS = 15 * 60 * 1000;
 
 async function runClientReusingPrompts(
   clientId: string,

@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { dedupePrompts, formatPromptsText, parsePromptsText, promptKey, type ParsedPrompt } from "@/lib/parse-prompts";
 
-// Largest list Live Search has actually been proven to finish within the
-// route's 300s maxDuration (Yellowbrick, 55 prompts, ~285s, 2026-10-12).
-const LIVE_SEARCH_PROVEN_MAX = 55;
+// Live Search measured ~285s for 55 prompts (Yellowbrick, 2026-10-12);
+// scaling linearly, the run routes' 800s maxDuration fits ~150. Warn at
+// 120 to keep a margin, since that scaling is an estimate, not measured.
+const LIVE_SEARCH_SAFE_MAX = 120;
 
 function parseAndDedupe(text: string) {
   return dedupePrompts(parsePromptsText(text));
@@ -91,10 +92,10 @@ export function TrackedPromptsEditor({ clientId, initialText }: { clientId: stri
         )}
       </div>
 
-      {current.length > LIVE_SEARCH_PROVEN_MAX && (
+      {current.length > LIVE_SEARCH_SAFE_MAX && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-          Live Search has only been tested up to {LIVE_SEARCH_PROVEN_MAX} prompts, which took about 285 of the 300
-          seconds allowed. A longer list may time out on Live Search. Training Search has more headroom.
+          Live Search took about 285 seconds for 55 prompts, and a run can last up to 800 seconds. Above about{" "}
+          {LIVE_SEARCH_SAFE_MAX} prompts, Live Search may time out. Training Search has more headroom.
         </div>
       )}
 

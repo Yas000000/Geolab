@@ -2,7 +2,7 @@ import { handleCallback } from "@vercel/queue";
 import { runScheduledClient } from "@/lib/scheduled-run";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800; // Pro plan ceiling -- runs wait on the full Python pipeline call
 
 /**
  * Queue consumer for "llm-pipeline-jobs" -- no public URL, unreachable from

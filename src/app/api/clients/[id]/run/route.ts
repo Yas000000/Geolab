@@ -2,7 +2,7 @@ import { runClientNow } from "@/lib/scheduled-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 800; // Pro plan ceiling -- runs wait on the full Python pipeline call
 
 const REASON_MESSAGE: Record<string, string> = {
   already_running: "This client already has a run in progress.",
