@@ -5,6 +5,8 @@ import { RunSchedule } from "@/generated/prisma/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Long enough for the after() history import a GA4/GSC change triggers.
+export const maxDuration = 800;
 
 interface PatchBody {
   schedule?: keyof typeof RunSchedule;

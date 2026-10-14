@@ -2,7 +2,7 @@ import { importHistoryForClient } from "@/lib/analytics-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 800; // full GA4 history can be several thousand upserts
 
 const REASON: Record<string, { message: string; status: number }> = {
   client_not_found: { message: "Client not found.", status: 404 },
@@ -12,7 +12,7 @@ const REASON: Record<string, { message: string; status: number }> = {
   failed: { message: "Google returned an error while importing.", status: 502 },
 };
 
-/** Imports the last ~16 months of GA4/AI-traffic/Search Console data for one client. */
+/** Imports all available GA4/AI-traffic history and Search Console's last ~16 months for one client. */
 export async function POST(_request: Request, ctx: RouteContext<"/api/clients/[id]/analytics-import">): Promise<Response> {
   const { id } = await ctx.params;
   const result = await importHistoryForClient(id);

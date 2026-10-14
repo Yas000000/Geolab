@@ -36,14 +36,14 @@ export async function GET(request: Request): Promise<Response> {
     select: { id: true, ga4PropertyId: true, gscSiteUrl: true },
   });
 
-  const startDate = utcDaysAgo(ROLLING_DAYS);
-  const endDate = utcDaysAgo(1);
+  const start = utcDaysAgo(ROLLING_DAYS);
+  const range = { ga4Start: start, gscStart: start, end: utcDaysAgo(1) };
   let pulled = 0;
   let skipped = 0;
 
   for (const client of clients) {
     try {
-      await syncClientAnalytics(oauthClient, client, startDate, endDate);
+      await syncClientAnalytics(oauthClient, client, range);
       pulled++;
     } catch (err) {
       if (isAuthError(err)) {

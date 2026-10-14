@@ -5,10 +5,14 @@ import { fetchGa4DailySeries, fetchGscDailySeries } from "@/lib/google-metrics";
 import { fetchAiTrafficDailySeries } from "@/lib/ai-traffic";
 import { getGoogleOAuthClient, isAuthError, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
 
-// Search Console's own retention limit (~16 months) -- also covers the
-// date picker's "Last Year" comparison. GA4 keeps longer, but importing the
-// same span for both keeps the Traffic page's sources aligned.
-export const HISTORY_DAYS = 486;
+// Search Console's own retention limit (~16 months) -- it has nothing older.
+export const GSC_HISTORY_DAYS = 486;
+
+// GA4 has no such limit -- standard report data goes back to the property's
+// creation. This is the Data API's own floor (confirmed live: 2015-08-13 is
+// rejected with INVALID_ARGUMENT); asking from here returns only the days
+// that actually have data (Yellowbrick: back to 2022-07-07, 1,560 days).
+export const GA4_EARLIEST_DATE = new Date("2015-08-14T00:00:00.000Z");
 
 // The daily pull re-fetches this many days, not just yesterday: Search
 // Console only returns finalized data (2-3 days behind), and GA4 keeps
@@ -40,23 +44,24 @@ export interface AnalyticsSyncResult {
 }
 
 /**
- * Pulls a client's GA4, AI-traffic and Search Console data for every day in
- * [startDate, endDate] and upserts one snapshot row per day per source.
- * Used by both the daily cron (rolling window) and the history import
- * (16 months). Throws on any Google API error -- callers decide whether an
- * auth error stops a whole loop (the cron) or just reports back (import).
+ * Pulls a client's GA4, AI-traffic and Search Console data day by day up to
+ * `end` and upserts one snapshot row per day per source. GA4 (incl. AI
+ * traffic) and Search Console take separate start dates, since their
+ * available history differs. Used by both the daily cron (rolling window)
+ * and the history import. Throws on any Google API error -- callers decide
+ * whether an auth error stops a whole loop (the cron) or just reports back.
  */
 export async function syncClientAnalytics(
   oauthClient: OAuth2Client,
   client: { id: string; ga4PropertyId: string | null; gscSiteUrl: string | null },
-  startDate: Date,
-  endDate: Date,
+  range: { ga4Start: Date; gscStart: Date; end: Date },
 ): Promise<AnalyticsSyncResult> {
   const result: AnalyticsSyncResult = { ga4Days: 0, aiDays: 0, gscDays: 0 };
   const clientId = client.id;
+  const { ga4Start, gscStart, end: endDate } = range;
 
   if (client.ga4PropertyId) {
-    const ga4 = await fetchGa4DailySeries(oauthClient, client.ga4PropertyId, startDate, endDate);
+    const ga4 = await fetchGa4DailySeries(oauthClient, client.ga4PropertyId, ga4Start, endDate);
     await upsertInBatches(
       [...ga4].map(([key, metrics]) => {
         const date = dayToDate(key);
@@ -69,7 +74,7 @@ export async function syncClientAnalytics(
     );
     result.ga4Days = ga4.size;
 
-    const ai = await fetchAiTrafficDailySeries(oauthClient, client.ga4PropertyId, startDate, endDate);
+    const ai = await fetchAiTrafficDailySeries(oauthClient, client.ga4PropertyId, ga4Start, endDate);
     await upsertInBatches(
       [...ai].map(([key, breakdown]) => {
         const date = dayToDate(key);
@@ -84,7 +89,7 @@ export async function syncClientAnalytics(
   }
 
   if (client.gscSiteUrl) {
-    const gsc = await fetchGscDailySeries(oauthClient, client.gscSiteUrl, startDate, endDate);
+    const gsc = await fetchGscDailySeries(oauthClient, client.gscSiteUrl, gscStart, endDate);
     await upsertInBatches(
       [...gsc].map(([key, metrics]) => {
         const date = dayToDate(key);
@@ -101,12 +106,16 @@ export async function syncClientAnalytics(
   return result;
 }
 
-/** 16 months of history, ending yesterday. */
+/** Full available history, ending yesterday: all of GA4, Search Console's last 16 months. */
 export async function importClientAnalyticsHistory(
   oauthClient: OAuth2Client,
   client: { id: string; ga4PropertyId: string | null; gscSiteUrl: string | null },
 ): Promise<AnalyticsSyncResult> {
-  return syncClientAnalytics(oauthClient, client, utcDaysAgo(HISTORY_DAYS), utcDaysAgo(1));
+  return syncClientAnalytics(oauthClient, client, {
+    ga4Start: GA4_EARLIEST_DATE,
+    gscStart: utcDaysAgo(GSC_HISTORY_DAYS),
+    end: utcDaysAgo(1),
+  });
 }
 
 export type ImportHistoryResult =

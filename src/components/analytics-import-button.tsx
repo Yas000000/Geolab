@@ -40,10 +40,11 @@ export function AnalyticsImportButton({ clientId, coverage }: { clientId: string
           disabled={importing}
           className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
         >
-          {importing ? "Importing…" : "Import last 16 months from Google"}
+          {importing ? "Importing…" : "Import full history from Google"}
         </button>
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          Safe to re-run; existing days are updated, not duplicated.
+          All Google Analytics history, plus Search Console&apos;s last 16 months (its limit). Safe to re-run;
+          existing days are updated, not duplicated.
         </span>
       </div>
       {error && (
