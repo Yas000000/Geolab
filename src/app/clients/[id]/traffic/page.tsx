@@ -29,6 +29,11 @@ function inDateWindow(date: Date, range: DateRange | null): boolean {
   return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
 }
 
+// Snapshot dates are UTC-midnight days -- format in UTC so the day can't shift.
+function formatUtcDay(d: Date) {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
 function dateLabel(d: Date) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
@@ -75,12 +80,7 @@ export default async function ClientTrafficPage({
   const rangeStart = dateRange?.start ?? allTimeRange?.start;
   const gscHistoryNote =
     gscEarliest && rangeStart && rangeStart.getTime() < gscEarliest.getTime()
-      ? `Search Console only keeps 16 months of data, so these figures start ${gscEarliest.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          timeZone: "UTC",
-        })}.`
+      ? `Search Console only keeps 16 months of data, so these figures start ${formatUtcDay(gscEarliest)}.`
       : null;
   const aiInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, dateRange));
 
@@ -191,12 +191,14 @@ export default async function ClientTrafficPage({
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
               Search Console
             </h2>
-            {gscHistoryNote && (
+            {gscHistoryNote && gscInRange.length > 0 && (
               <p className="-mt-2 mb-3 text-xs text-zinc-500 dark:text-zinc-400">{gscHistoryNote}</p>
             )}
             {gscInRange.length === 0 ? (
               <div className="rounded-lg border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-                No GSC data in this range.
+                {gscEarliest && rangeStart && rangeStart.getTime() < gscEarliest.getTime()
+                  ? `No Search Console data in this range. Search Console only keeps 16 months, so its data starts ${formatUtcDay(gscEarliest)}.`
+                  : "No GSC data in this range."}
               </div>
             ) : (
               <>
