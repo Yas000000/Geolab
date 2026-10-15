@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { SessionCountSparkline, type SessionCountPoint } from "@/components/session-count-sparkline";
-import { parseISODate, type DateRange } from "@/lib/date-range";
+import { geoAllTimeRange, parseISODate, type DateRange } from "@/lib/date-range";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +17,9 @@ async function getClient(id: string) {
       analyticsSnapshots: { orderBy: { date: "asc" } },
       searchConsoleSnapshots: { orderBy: { date: "asc" } },
       aiTrafficSnapshots: { orderBy: { date: "asc" } },
+      // Only the earliest of each -- they define "All Time" (geoAllTimeRange).
+      runs: { where: { status: "COMPLETE" }, orderBy: { startedAt: "asc" }, take: 1, select: { startedAt: true } },
+      benchmarkSnapshots: { orderBy: { snapshotDate: "asc" }, take: 1, select: { snapshotDate: true } },
     },
   });
 }
@@ -55,34 +58,39 @@ export default async function ClientTrafficPage({
   const client = await getClient(id);
   if (!client) notFound();
 
-  // Full unbounded span (ignores the active date filter) -- used only to show
-  // real dates under the picker's "All Time" option, never for filtering.
-  // These snapshot `date` fields are UTC-midnight date-only values (one row
-  // per client per day), so truncate in UTC terms -- same fix as the
-  // benchmark snapshotDate's own display, see rankings/page.tsx for the
-  // mixed-semantics version of this same note.
+  // "All Time" = the same span as the Rankings page: from the client's first
+  // GEO data point (first complete run or imported benchmark) to today --
+  // and unlike Rankings it actually has to filter by it, since GA4 history
+  // can reach back years before GEO tracking began (Yellowbrick: 2022 vs
+  // Mar 2026). Older traffic stays reachable via a custom range. A client
+  // with no GEO data yet falls back to its full traffic span. Snapshot
+  // `date` fields are UTC-midnight date-only values, so that fallback
+  // truncates in UTC terms.
   const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
-  const allTimeStarts = [
+  const trafficStarts = [
     ...client.analyticsSnapshots.map((s) => utcCalendarDay(s.date)),
     ...client.searchConsoleSnapshots.map((s) => utcCalendarDay(s.date)),
     ...client.aiTrafficSnapshots.map((s) => utcCalendarDay(s.date)),
   ];
-  const allTimeRange: DateRange | null = allTimeStarts.length
-    ? { start: new Date(Math.min(...allTimeStarts)), end: new Date() }
-    : null;
+  const allTimeRange: DateRange | null =
+    geoAllTimeRange(
+      client.runs.map((r) => r.startedAt),
+      client.benchmarkSnapshots.map((b) => b.snapshotDate),
+    ) ?? (trafficStarts.length ? { start: new Date(Math.min(...trafficStarts)), end: new Date() } : null);
+  const windowRange = dateRange ?? allTimeRange;
 
-  const ga4InRange = client.analyticsSnapshots.filter((s) => inDateWindow(s.date, dateRange));
-  const gscInRange = client.searchConsoleSnapshots.filter((s) => inDateWindow(s.date, dateRange));
+  const ga4InRange = client.analyticsSnapshots.filter((s) => inDateWindow(s.date, windowRange));
+  const gscInRange = client.searchConsoleSnapshots.filter((s) => inDateWindow(s.date, windowRange));
   // Search Console only keeps ~16 months while GA4 history goes back years,
   // so a range reaching past GSC's earliest day would otherwise show
   // partial (or zero) GSC totals that read like real low traffic.
   const gscEarliest = client.searchConsoleSnapshots.find((s) => s.clicks != null || s.impressions != null)?.date;
-  const rangeStart = dateRange?.start ?? allTimeRange?.start;
+  const rangeStart = windowRange?.start;
   const gscHistoryNote =
     gscEarliest && rangeStart && rangeStart.getTime() < gscEarliest.getTime()
       ? `Search Console only keeps 16 months of data, so these figures start ${formatUtcDay(gscEarliest)}.`
       : null;
-  const aiInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, dateRange));
+  const aiInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, windowRange));
 
   const sumGa4 = (field: "sessions" | "activeUsers" | "keyEvents") =>
     ga4InRange.reduce((acc, s) => acc + (s[field] ?? 0), 0);

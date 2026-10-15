@@ -5,7 +5,7 @@ import { ModelFilter } from "@/components/model-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
-import { parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
+import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 
 export const dynamic = "force-dynamic";
 
@@ -218,21 +218,12 @@ function buildDashboardData(
   const matchesPlatform = (r: RawResponseData) => !platformFilter || r.platform === platformFilter;
 
   // Full unbounded span (ignores the active date filter) -- used only to show
-  // real dates under the picker's "All Time" option, never for filtering.
-  // run.startedAt is a real moment-in-time (truncate in LOCAL terms, matching
-  // inWindow()'s own local-day boundary convention); snapshotDate is a
-  // UTC-midnight date-only value (truncate in UTC terms, matching the fix
-  // already applied to its own display in the Historical Benchmark section)
-  // -- mixing these without normalizing first reintroduces that exact bug.
-  const localCalendarDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
-  const allTimeStarts = [
-    ...completeRuns.map((r) => localCalendarDay(r.startedAt)),
-    ...client.benchmarkSnapshots.map((s) => utcCalendarDay(s.snapshotDate)),
-  ];
-  const allTimeRange: DateRange | null = allTimeStarts.length
-    ? { start: new Date(Math.min(...allTimeStarts)), end: new Date() }
-    : null;
+  // real dates under the picker's "All Time" option; this page's data
+  // starts there anyway. Shared with the Traffic page (see geoAllTimeRange).
+  const allTimeRange = geoAllTimeRange(
+    completeRuns.map((r) => r.startedAt),
+    client.benchmarkSnapshots.map((s) => s.snapshotDate),
+  );
 
   const platformsAvailable = Array.from(
     new Set(completeRuns.flatMap((run) => run.rawResponses.map((r) => r.platform))),

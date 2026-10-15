@@ -183,3 +183,23 @@ export function parseISODate(s: string): Date {
 export function formatDisplayDate(d: Date, utc = false): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: utc ? "UTC" : undefined });
 }
+
+/**
+ * The "All Time" span for a client: from its first GEO data point -- its
+ * earliest complete run or imported benchmark, whichever is earlier -- to
+ * now. Shared by the Rankings and Traffic pages so "All Time" means the
+ * same period on both (Traffic's GA4 history can reach back years before
+ * GEO tracking started; it stays reachable via a custom range).
+ *
+ * run.startedAt is a real moment-in-time (truncate in LOCAL terms, matching
+ * the pages' local-day window convention); benchmark snapshotDate is a
+ * UTC-midnight date-only value (truncate in UTC terms) -- mixing these
+ * without normalizing first reintroduces this project's recurring
+ * off-by-one-day bug.
+ */
+export function geoAllTimeRange(runStarts: Date[], benchmarkDates: Date[]): DateRange | null {
+  const localCalendarDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
+  const starts = [...runStarts.map(localCalendarDay), ...benchmarkDates.map(utcCalendarDay)];
+  return starts.length ? { start: new Date(Math.min(...starts)), end: new Date() } : null;
+}
