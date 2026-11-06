@@ -43,6 +43,43 @@ model Client {
   searchConsoleSnapshots  SearchConsoleSnapshot[]
   aiTrafficSnapshots      AiTrafficSnapshot[]
   benchmarkSnapshots      BenchmarkSnapshot[]
+  crawlChecks             CrawlCheck[]
+  monthlyReports          MonthlyReport[]
+}
+
+// A generated monthly client report (src/lib/monthly-report.ts): one calendar
+// month vs the month before, built from this portal's own data. Stored as a
+// snapshot -- data is the computed numbers, takeaways the AI-written Key
+// Takeaway per section -- so reopening or printing it never changes it or
+// costs another API call. Generating the same month again replaces it.
+model MonthlyReport {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  month     String   // "YYYY-MM", UTC calendar month
+  data      Json
+  takeaways Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([clientId, month])
+}
+
+// One AI crawler access check of a client's site (python_pipeline/crawlability.py):
+// can Claude, Gemini and ChatGPT's own infrastructure reach it? results is the
+// per-vendor list exactly as the Python function returns it:
+// [{ vendor, tier, confidence, success, detail }]. Run from Settings, and monthly
+// by cron/nightly for clients on a non-MANUAL schedule.
+model CrawlCheck {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  url         String
+  triggeredBy String?
+  checkedAt   DateTime @default(now())
+  results     Json
+
+  @@index([clientId, checkedAt])
 }
 
 // A historical benchmark imported from an external document (an ISA/strategy
@@ -280,9 +317,29 @@ model RawResponse {
   createdAt    DateTime  @default(now())
 
   parsedResult ParsedResult?
+  citations    Citation[]
 
   @@unique([runId, promptId, platform])
   @@index([runId])
+}
+
+// A page an AI answer cited -- Live Search responses only (Training Search
+// has no web access). position is the order it was first cited in that
+// answer; url is de-duplicated within one response. domain is stored (host
+// without "www.") so the Citations page can group by site without parsing
+// URLs at read time; for an unresolved Gemini redirect it is the site
+// Gemini named rather than the redirect host.
+model Citation {
+  id            String      @id @default(cuid())
+  rawResponseId String
+  rawResponse   RawResponse @relation(fields: [rawResponseId], references: [id], onDelete: Cascade)
+  position      Int
+  url           String      @db.Text
+  title         String?     @db.Text
+  domain        String
+
+  @@index([rawResponseId])
+  @@index([domain])
 }
 
 enum Sentiment {

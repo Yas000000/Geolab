@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from python_pipeline.geo_prompt_engine import CATEGORY_LABELS, GeoPromptEngine
 from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE
-from python_pipeline.parser import analyze
+from python_pipeline.parser import analyze, normalize_text
 from python_pipeline.brand_extractor import extract_brands
 
 app = FastAPI()
@@ -37,6 +37,9 @@ class RunPipelineRequest(BaseModel):
     geography: str | None = None
     kickoff_notes: str | None = None
     competitors: list[str] | None = None
+    # Other exact names the client may be mentioned under -- any match counts
+    # as the client, always reported under `brand` (parser.analyze()).
+    aliases: list[str] | None = None
     platforms: list[str] | None = None
     live_search: bool = False
 
@@ -116,6 +119,11 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
             "target_audience": payload.audience or "businesses",
             "target_geography": payload.geography or "",
             "kickoff_notes": payload.kickoff_notes or "",
+            # With no location given, the Location-Based instruction still
+            # demands a regional signal and the model invents one (e.g. "the
+            # Southeast" for a nationwide client) -- same rule the proposal
+            # generator follows. Its 3 slots go to other categories.
+            "include_location_prompts": bool((payload.geography or "").strip()),
         }
         # Stage 1: prompt generation. geo_prompt_engine.py's generate() is
         # deliberately kept synchronous/sequential (see that module's docstring
@@ -167,7 +175,7 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     async def run_one(prompt_entry: dict, platform_key: str, query_fn) -> dict:
         async with semaphores[platform_key]:
             result = await query_fn(prompt_entry["text"])
-        parsed = analyze(result.response, payload.brand, payload.competitors or [])
+        parsed = analyze(result.response, payload.brand, payload.competitors or [], payload.aliases or [])
         return {
             "promptPosition": prompt_entry["position"],
             "promptText": prompt_entry["text"],
@@ -176,6 +184,7 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
             "modelId": result.platform,
             "responseText": result.response,
             "error": result.error,
+            "citations": result.citations,
             "parsed": {
                 "mentioned": parsed.mentioned,
                 "rank": parsed.rank,
@@ -200,9 +209,13 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     # text reaches this point: geo_prompt_engine.py's own cross-category
     # dedup for the auto-gen path, _build_manual_prompt_groups()'s explicit
     # dedup above for the manual path.
+    # Text is unicode-folded first (non-breaking hyphens/spaces, which live-
+    # search answers use) so "Smith & Nephew" can't come back as a
+    # different brand name from "Smith & Nephew" -- synced from
+    # geo-rank-checker fc1d911. The stored responseText stays as returned.
     raw_responses_by_platform: dict[str, dict[str, str]] = {name: {} for name in selected}
     for r in results:
-        raw_responses_by_platform[r["platform"]][r["promptText"]] = r["responseText"]
+        raw_responses_by_platform[r["platform"]][r["promptText"]] = normalize_text(r["responseText"])
 
     extracted = await extract_brands(raw_responses_by_platform)
     for r in results:

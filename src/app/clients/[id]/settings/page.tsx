@@ -8,6 +8,8 @@ import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
 import { formatPromptsText } from "@/lib/parse-prompts";
 import { AnalyticsImportButton } from "@/components/analytics-import-button";
+import { CrawlCheckPanel } from "@/components/crawl-check-panel";
+import { CRAWL_CHECK_INTERVAL_DAYS, CRAWL_VENDOR_LABEL, CRAWL_VENDOR_METHOD, latestCrawlCheck, siteUrl } from "@/lib/crawl-check";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
     client.ga4PropertyId || client.gscSiteUrl
       ? await getAnalyticsCoverage(id, Boolean(client.ga4PropertyId), Boolean(client.gscSiteUrl))
       : null;
+  const crawlCheck = await latestCrawlCheck(id);
 
   return (
     <div>
@@ -112,6 +115,31 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
               <AnalyticsImportButton clientId={id} coverage={analyticsCoverage} />
             </div>
           )}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          AI Crawler Access
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <CrawlCheckPanel
+            clientId={id}
+            url={crawlCheck?.url ?? (client.domain ? siteUrl(client.domain) : null)}
+            checkedAtLabel={crawlCheck ? utcDay(crawlCheck.checkedAt) : null}
+            rows={(crawlCheck?.results ?? []).map((r) => ({
+              vendor: r.vendor,
+              label: CRAWL_VENDOR_LABEL[r.vendor] ?? r.vendor,
+              method: CRAWL_VENDOR_METHOD[r.vendor] ?? r.tier,
+              success: r.success,
+              detail: r.detail,
+            }))}
+            scheduleNote={
+              client.schedule === "MANUAL"
+                ? `Runs automatically every ${CRAWL_CHECK_INTERVAL_DAYS} days once this client is on a recurring schedule.`
+                : `Runs automatically every ${CRAWL_CHECK_INTERVAL_DAYS} days.`
+            }
+          />
         </div>
       </section>
 

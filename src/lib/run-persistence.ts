@@ -26,6 +26,8 @@ interface PipelineResultCell {
   modelId: string;
   responseText: string;
   error: string | null;
+  // Live Search only; absent/empty for Training Search.
+  citations?: { url: string; title: string | null; domain: string }[];
   parsed: {
     mentioned: boolean;
     rank: number | null;
@@ -158,6 +160,14 @@ export async function callPipelineAndPersist(params: {
           platform: PLATFORM_MAP[r.platform as keyof typeof PLATFORM_MAP] as Platform,
           modelId: r.modelId,
           responseText: r.responseText,
+          citations: {
+            create: (r.citations ?? []).map((c, i) => ({
+              position: i + 1,
+              url: c.url,
+              title: c.title,
+              domain: c.domain,
+            })),
+          },
           parsedResult: {
             create: {
               clientBrandMentioned: r.parsed.mentioned,

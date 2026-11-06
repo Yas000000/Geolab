@@ -1,9 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { isDue } from "@/lib/due-clients";
+import { clientsDueForCrawlCheck, runCrawlCheck } from "@/lib/crawl-check";
 import { send } from "@vercel/queue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // the monthly AI crawler checks run here, in parallel, ~15-60s each
 
 /**
  * Fires once daily (vercel.json). Stays thin per Vercel's own current
@@ -30,5 +32,12 @@ export async function GET(request: Request): Promise<Response> {
     await send("llm-pipeline-jobs", { clientId: client.id });
   }
 
-  return Response.json({ checked: clients.length, enqueued: due.length });
+  // Monthly AI crawler access check, same non-MANUAL gate as the runs above.
+  // Short calls (three vendor requests in parallel per client), so they run
+  // here directly rather than through the queue.
+  const crawlDue = await clientsDueForCrawlCheck(now);
+  const crawlResults = await Promise.allSettled(crawlDue.map((id) => runCrawlCheck(id, "cron")));
+  const crawlChecked = crawlResults.filter((r) => r.status === "fulfilled" && r.value.ok).length;
+
+  return Response.json({ checked: clients.length, enqueued: due.length, crawlDue: crawlDue.length, crawlChecked });
 }
