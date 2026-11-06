@@ -1,7 +1,8 @@
 """
 GEO Prompt Generation Engine
-Ported verbatim from geo-rank-checker/geo_prompt_engine.py. Generates exactly
-25 GEO prompts from a client domain + priority services. Stays fully
+Ported verbatim from geo-rank-checker/geo_prompt_engine.py (last synced
+2026-11-06, through geo-rank-checker bc07ead). Generates exactly 25 GEO
+prompts from a client domain + priority services. Stays fully
 synchronous -- the 7 category calls are deliberately NOT parallelized, since
 _filter_and_score threads a seen_across_categories list across calls in call
 order; parallelizing would make cross-category dedup order-dependent, a real
@@ -46,6 +47,10 @@ CATEGORY_LABELS = {
     "location_based": "Location-Based",
 }
 
+# Where location_based's slots go when a caller turns location prompts off
+# (context["include_location_prompts"] = False), so the run still totals 25.
+LOCATION_SLOT_REDISTRIBUTION = ["best_top", "who_offers", "shortlist_vendor_selection"]
+
 
 @dataclass
 class GeoPrompt:
@@ -69,7 +74,15 @@ class GeoPromptGroup:
 # never fires in practice. Preserved as-is per the porting decision to not
 # silently "fix" ported algorithm behavior.
 INFORMATIONAL_PATTERNS = re.compile(
-    r"\b(what is|what are|how does|how do|why is|explain|define|definition|"
+    # "how much" added 2026-10-07: catches direct explainer-style questions ("how much can I
+    # gift without risking retirement") that ask for a number/explanation, not a vendor -- found
+    # via a real Finura run where client-supplied kickoff-note questions leaked into generated
+    # prompts near-verbatim. "how can i/you" deliberately NOT added here even though it covers
+    # a similar real leak ("how can I avoid paying inheritance tax") -- too broad a pattern, since
+    # it would also reject legitimate vendor-seeking prompts like "how can I find the best IHT
+    # adviser". That leak is handled instead by instructing the model not to copy kickoff-note
+    # questions verbatim (see build_generation_prompt's NEVER-copy instruction below).
+    r"\b(what is|what are|how does|how do|how much|why is|explain|define|definition|"
     r"history of|overview of|tutorial|guide|learn|educate|training|"
     r"difference between\b(?!.*\bvsb))\b",
     re.IGNORECASE,
@@ -217,13 +230,24 @@ def build_generation_prompt(service, domain, context, category, target_count):
         ),
     }
     kickoff_notes = context.get("kickoff_notes", "").strip()
-    kickoff_block = (
-        f"\n\nCAMPAIGN KICKOFF NOTES:\n{kickoff_notes}\n" if kickoff_notes else ""
+    kickoff_block = ""
+    if kickoff_notes:
+        kickoff_block = (
+            f"\n\nCAMPAIGN KICKOFF NOTES (background context only -- NEVER copy a question or phrase "
+            f"from these notes verbatim or near-verbatim into a prompt, even if it looks relevant. If "
+            f"the notes include example client questions, those are informational by nature and must "
+            f"be rewritten into vendor-recommendation-style prompts per the rules above, not reused "
+            f"as-is):\n{kickoff_notes}\n"
+        )
+    geo_lockout = (
+        "\n\nDo not include any country, region, or city name in the prompt text, even if one appears "
+        "in the kickoff notes above -- this run is intentionally location-neutral in prompt wording."
+        if not geography else ""
     )
     instruction = category_instructions[category]
     return f"""{instruction}
 
-Target audience: {audience}{kickoff_block}
+Target audience: {audience}{kickoff_block}{geo_lockout}
 
 Return ONLY this JSON:
 {{
@@ -243,7 +267,6 @@ class GeoPromptEngine:
         context = context or {}
         brand_tokens = self._extract_brand_tokens(domain)
         allow_terms = {t.lower() for t in context.get("allow_terms", []) or []}
-        service_description = " and ".join(priority_services)
         geography = context.get("target_geography", "")
         groups = []
         # Each category is generated via an independent LLM call, and the category
@@ -253,9 +276,32 @@ class GeoPromptEngine:
         # ever saw one category's candidates at a time, so that collision went
         # uncaught -- tracked here across the whole generate() call instead.
         seen_across_categories: list[str] = []
-        for category in CATEGORIES:
-            target = CATEGORY_TARGETS[category]
-            candidates = self._generate_candidates(service_description, domain, context, category, target * 3)
+        # Opt-out used by the proposal generator: with no specific location to
+        # target, the location_based instruction still demands a "local or
+        # regional" signal and the model invents one (e.g. "the Southeast" for a
+        # nationwide client). Defaults to on so other callers are unchanged.
+        categories = list(CATEGORIES)
+        targets = dict(CATEGORY_TARGETS)
+        if not context.get("include_location_prompts", True):
+            categories.remove("location_based")
+            spare = targets.pop("location_based")
+            for i in range(spare):
+                targets[LOCATION_SLOT_REDISTRIBUTION[i % len(LOCATION_SLOT_REDISTRIBUTION)]] += 1
+        for category in categories:
+            target = targets[category]
+            # Generate per service rather than joining all priority_services into one
+            # "X and Y and Z" blob -- a joined blob produces prompts that straddle
+            # multiple services at once (e.g. "sovereign AI orchestration platform for
+            # classified data environments" mashing together a platform service and a
+            # defense/compliance service). Those cross-service intersections rarely
+            # correspond to a real market category, so AI engines have no memorized
+            # vendor list for them and answer with generic advice instead of naming
+            # anyone -- the opposite of what this report needs. One service per call
+            # keeps every prompt anchored to a single, real buyer intent.
+            per_service_count = max(1, -(-(target * 3) // len(priority_services)))
+            candidates = []
+            for service in priority_services:
+                candidates.extend(self._generate_candidates(service, domain, context, category, per_service_count))
             group = self._filter_and_score(candidates, category, brand_tokens, target, allow_terms, geography,
                                             seen_across_categories)
             groups.append(group)

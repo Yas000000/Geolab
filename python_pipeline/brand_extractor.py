@@ -7,7 +7,8 @@ time; this version gathers all batches concurrently via `asyncio.gather` instead
 since batches have no cross-batch state dependency (unlike geo_prompt_engine.py's
 category calls) -- a safe, speed-only deviation. The per-batch try/except is
 preserved so one bad batch doesn't fail the others, matching the source's
-"partial results survive" behavior.
+"partial results survive" behavior. Last synced 2026-11-06 (through
+geo-rank-checker dba814e).
 """
 
 import asyncio
@@ -28,7 +29,9 @@ _PROMPT = """\
 For each AI response below, extract every distinct company, brand, or product name that
 is recommended or listed as an option for the buyer's question. List them in the order
 they are ranked or first mentioned. Do not include generic terms, materials, or
-descriptive phrases -- only actual company/brand/product names.
+descriptive phrases -- only actual company/brand/product names. Do not include investors,
+backers, parent companies or partners that are only mentioned while describing another
+option (e.g. "LangChain - Backed by Sequoia Capital" gives LangChain, not Sequoia Capital).
 
 Responses to analyze (JSON array -- "response" truncated to 2000 chars):
 {responses_json}
@@ -52,13 +55,25 @@ def _get_client() -> anthropic.AsyncAnthropic:
 
 async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> None:
     client = _get_client()
-    payload = [{"index": it["index"], "response": it["response"]} for it in batch]
+    # Index the payload locally (0-based within THIS batch), not by each item's
+    # global position. Synced from geo-rank-checker 86e1889: a batch sent with
+    # global indices (e.g. 15-29) came back renumbered from 0 on a real run, so
+    # none matched index_map and the whole batch was silently dropped.
+    payload = [{"index": i, "response": it["response"]} for i, it in enumerate(batch)]
     prompt_text = _PROMPT.format(responses_json=json.dumps(payload, ensure_ascii=False, indent=2))
 
     try:
         msg = await client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
+            # Deterministic (synced from geo-rank-checker dba814e) -- otherwise the
+            # same answer can yield different brand names run to run, which this
+            # portal would show as competitors moving when nothing changed.
+            # Sent via extra_body: anthropic SDK 1.x (what Vercel installs from
+            # requirements.txt) dropped the `temperature` keyword and raises on
+            # it, failing every batch. The API itself still reads the field
+            # for this model (checked 2026-11-06: a 0..1 range error on 7).
+            extra_body={"temperature": 0},
             system=_SYSTEM,
             messages=[{"role": "user", "content": prompt_text}],
         )
@@ -66,14 +81,20 @@ async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> Non
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         parsed = json.loads(raw)
-        index_map = {it["index"]: it for it in batch}
+        index_map = {i: it for i, it in enumerate(batch)}
 
+        matched = set()
         for entry in parsed.get("results", []):
             original = index_map.get(entry.get("index"))
             if not original:
                 continue
+            matched.add(entry.get("index"))
             brands = [b.strip() for b in entry.get("brands", []) if b and b.strip()]
             result_map[(original["platform"], original["prompt"])] = brands
+
+        missing = len(batch) - len(matched)
+        if missing:
+            print(f"[brand_extractor] Batch {batch_num}: {missing}/{len(batch)} items had no matching index in the model's response")
 
     except Exception as exc:
         print(f"[brand_extractor] Batch {batch_num} error: {exc}")
@@ -93,7 +114,6 @@ async def extract_brands(raw_responses: dict) -> dict:
         for prompt_text, response_text in prompt_map.items():
             if response_text and response_text.strip():
                 items.append({
-                    "index": len(items),
                     "platform": platform,
                     "prompt": prompt_text,
                     "response": response_text[:2000],

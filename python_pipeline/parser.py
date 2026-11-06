@@ -1,7 +1,9 @@
 """
 Parses an AI response to detect brand mentions, rank position, and sentiment.
 Ported verbatim from geo-rank-checker/parser.py -- pure regex/string logic,
-no I/O, no reason to change behavior during the port.
+no I/O, no reason to change behavior during the port. Last synced 2026-11-06
+(through geo-rank-checker fc1d911), plus one portal-only fix: curly quotes are
+folded too (see _UNICODE_FOLD).
 """
 
 import re
@@ -18,46 +20,79 @@ class MentionResult:
     top_items: list = field(default_factory=list)           # [(rank, label), ...] top 5 from AI list
 
 
-def analyze(response: str, brand: str, competitors: list = None) -> MentionResult:
+# Live-search answers write non-breaking hyphens and spaces ("VT\u20111953",
+# "Smith\u202f&\u202fNephew", "KCI\u202f\u2013"), which made "VT-1953" fail to match
+# as a brand alias and turned one company into several competitor labels
+# (real Vyome live run, 2026-10-28).
+# Portal-only addition (2026-11-06, not yet in geo-rank-checker): curly quotes fold
+# to straight ones. ChatGPT writes "Seattle Children\u2019s" while the brand is typed
+# "Seattle Children's", so every ChatGPT answer naming it read as "not mentioned"
+# (found on a real live test run). Brand/alias/competitor names get the same
+# folding in analyze(), so a name typed with curly quotes also matches.
+_UNICODE_FOLD = str.maketrans({"\u2010": "-", "\u2011": "-", "\u00a0": " ", "\u2007": " ", "\u202f": " ",
+                               "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
+
+
+def normalize_text(text: str) -> str:
+    return text.translate(_UNICODE_FOLD) if text else text
+
+
+def analyze(response: str, brand: str, competitors: list = None, aliases: list = None) -> MentionResult:
+    """
+    `aliases`: other exact names the client may be mentioned under (e.g. a formal legal
+    name alongside a shorthand/acronym) -- a match on ANY of [brand] + aliases counts as
+    the client being mentioned, but the report always displays the canonical `brand`
+    name, never the alias that happened to match -- otherwise the same client would
+    fragment into separate rows across different reports depending on which name an AI
+    response happened to use.
+    """
     if not response:
         return MentionResult(False, None, "n/a", "", [], [])
 
-    competitors = competitors or []
-    all_brands = [brand] + competitors
+    response = normalize_text(response)
+    competitors = [normalize_text(c) for c in (competitors or [])]
+    match_names = [normalize_text(n) for n in [brand] + list(aliases or [])]
     numbered_items = _extract_numbered_items(response)
-    brands_in_response = _find_brands_in_response(response, all_brands, numbered_items)
+    competitor_entries = _find_brands_in_response(response, competitors, numbered_items)
     top_items = _extract_top_items(numbered_items, n=5)
 
-    brand_pattern = re.compile(re.escape(brand), re.IGNORECASE)
-    brand_match = brand_pattern.search(response)
-    if not brand_match:
-        return MentionResult(False, None, "n/a", "", brands_in_response, top_items)
+    client_pos = None
+    for name in match_names:
+        m = re.search(re.escape(name), response, re.IGNORECASE)
+        if m and (client_pos is None or m.start() < client_pos):
+            client_pos = m.start()
+    if client_pos is None:
+        return MentionResult(False, None, "n/a", "", competitor_entries, top_items)
 
-    rank = _find_brand_rank(numbered_items, brand)
+    rank = _find_brand_rank_multi(numbered_items, match_names)
     if rank is None:
-        rank = _find_position_rank(response, brand, competitors)
+        rank = _find_position_rank_multi(response, match_names, competitors)
+
+    brands_in_response = sorted(
+        competitor_entries + [(brand, rank)],
+        key=lambda x: (x[1] if x[1] is not None else 999)
+    )
 
     # If the brand isn't already in top_items (it was mentioned in prose, not in the
     # numbered list), inject it at the position matching where it first appears in text.
     brand_in_top = any(
-        re.search(re.escape(brand), label, re.IGNORECASE)
+        any(re.search(re.escape(name), label, re.IGNORECASE) for name in match_names)
         for _, label in top_items
     )
     if not brand_in_top:
-        brand_pos = brand_match.start()
         insert_at = len(top_items)  # default: append
         for i, (_, label) in enumerate(top_items):
             key = label[:15].strip()
             if key:
                 item_m = re.search(re.escape(key), response, re.IGNORECASE)
-                if item_m and brand_pos < item_m.start():
+                if item_m and client_pos < item_m.start():
                     insert_at = i
                     break
         top_items = list(top_items)
         top_items.insert(insert_at, (rank, brand))
         top_items = top_items[:5]
 
-    excerpt = _extract_excerpt(response, brand)
+    excerpt = _extract_excerpt_multi(response, match_names)
     sentiment = _detect_sentiment(excerpt)
 
     return MentionResult(True, rank, sentiment, excerpt, brands_in_response, top_items)
@@ -123,6 +158,47 @@ def _find_brand_rank(numbered_items: dict, brand: str) -> int | None:
     return None
 
 
+def _find_brand_rank_multi(numbered_items: dict, match_names: list) -> int | None:
+    """Tries each client name in order (canonical first, then aliases), returning the
+    first rank any of them resolves to -- a response may lead with an acronym in the
+    numbered list but spell out the full name elsewhere, or vice versa."""
+    for name in match_names:
+        rank = _find_brand_rank(numbered_items, name)
+        if rank is not None:
+            return rank
+    return None
+
+
+def _find_position_rank_multi(text: str, match_names: list, competitors: list) -> int | None:
+    """Same as _find_position_rank, but the client's position is the earliest match
+    across all of its names -- all of them count as the same entity for ranking."""
+    client_pos = None
+    for name in match_names:
+        m = re.search(re.escape(name), text, re.IGNORECASE)
+        if m and (client_pos is None or m.start() < client_pos):
+            client_pos = m.start()
+    if client_pos is None:
+        return None
+    positions = {"__client__": client_pos}
+    for c in competitors:
+        m = re.search(re.escape(c), text, re.IGNORECASE)
+        if m:
+            positions[c] = m.start()
+    sorted_keys = sorted(positions, key=lambda k: positions[k])
+    return sorted_keys.index("__client__") + 1
+
+
+def _extract_excerpt_multi(response: str, match_names: list) -> str:
+    """Same as _extract_excerpt, but matches on any of the client's names."""
+    patterns = [re.compile(re.escape(name), re.IGNORECASE) for name in match_names]
+    sentences = re.split(r'(?<=[.!?])\s+', response)
+    for i, sentence in enumerate(sentences):
+        if any(p.search(sentence) for p in patterns):
+            window = sentences[i:i + 2]
+            return ' '.join(s.strip() for s in window if s.strip())
+    return ""
+
+
 def _find_brands_in_response(text: str, brands: list, numbered_items: dict) -> list:
     """Returns [(brand_name, rank_or_None), ...] ordered by rank then text position."""
     found = []
@@ -151,8 +227,15 @@ def _extract_top_items(numbered_items: dict, n: int = 5) -> list:
         # that requirement, a mid-word hyphen ("Flat-Fee", "V-VICTA", "de-escalation")
         # gets treated as a separator too, truncating the label mid-word ("Consider a
         # Flat-Fee MLS Service" -> "Consider a Flat"). Em dash/colon/pipe still split
-        # freely since those are never used mid-word.
-        label = re.split(r'\s+[-–]\s+|\s*[—:|]\s*', text)[0].strip()
+        # freely since those are never used mid-word -- except inside parentheses:
+        # "Vyome Holdings (NASDAQ: HIND) — The most advanced..." was cut to
+        # "Vyome Holdings (NASDAQ" (real Vyome live run, 2026-10-28).
+        label = text
+        for sep in re.finditer(r'\s+[-–]\s+|\s*[—:|]\s*', text):
+            if text.count('(', 0, sep.start()) <= text.count(')', 0, sep.start()):
+                label = text[:sep.start()]
+                break
+        label = label.strip()
         # Trim markdown bold leftovers and cap length
         label = re.sub(r'\*+', '', label).strip()[:60]
         items.append((rank, label))
@@ -211,10 +294,19 @@ _NEGATIVE_WORDS = {
 }
 
 
+# "issue" as a verb ("licensed therapists issue ESA letters") is not a complaint.
+# Found live on a real CertaPet run, 2026-10-26: both of its "negative" mentions
+# were descriptions of a provider that issues letters.
+_ISSUE_VERB = re.compile(
+    r"\b(?:to|can|will|may|must|that|who|they|and)\s+issues?\b"
+    r"|\bissues?\s+(?:a|an|the|your|their|official|valid|legitimate|esa|psd|letters?|documentation)\b",
+    re.IGNORECASE)
+
+
 def _detect_sentiment(text: str) -> str:
     if not text:
         return "neutral"
-    words = set(re.findall(r'\b\w+\b', text.lower()))
+    words = set(re.findall(r'\b\w+\b', _ISSUE_VERB.sub(" ", text).lower()))
     pos = words & _POSITIVE_WORDS
     neg = words & _NEGATIVE_WORDS
     if pos and not neg:
