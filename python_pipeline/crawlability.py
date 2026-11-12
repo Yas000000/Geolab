@@ -80,7 +80,10 @@ async def check_gemini(url: str) -> CheckResult:
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    # v1beta pinned: google-genai 3.x defaults to v1, which 404s this model
+    # (see _gemini_client in platforms.py).
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                          http_options=types.HttpOptions(api_version="v1beta"))
     try:
         resp = await client.aio.models.generate_content(
             model="gemini-flash-lite-latest",

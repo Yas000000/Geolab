@@ -1,10 +1,11 @@
 import asyncio
+import traceback
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from python_pipeline.geo_prompt_engine import CATEGORY_LABELS, GeoPromptEngine
-from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE
+from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE, PlatformResult
 from python_pipeline.parser import analyze, normalize_text
 from python_pipeline.brand_extractor import extract_brands
 
@@ -180,7 +181,18 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
 
     async def run_one(prompt_entry: dict, platform_key: str, query_fn) -> dict:
         async with semaphores[platform_key]:
-            result = await query_fn(prompt_entry["text"])
+            try:
+                result = await query_fn(prompt_entry["text"])
+            except Exception as e:
+                # Each query function returns its own API errors as a result,
+                # but anything that escapes one (2026-11-12: `import httpx`
+                # failing once a deploy stopped installing it) would make
+                # gather() fail the WHOLE run, every platform, after 3s.
+                # Kept to this one answer instead, and logged with traceback
+                # since Vercel shows no traceback for a 500.
+                traceback.print_exc()
+                label = f"{platform_key} (live search)" if payload.live_search else platform_key
+                result = PlatformResult(label, "", error=f"{type(e).__name__}: {e}")
         parsed = analyze(result.response, payload.brand, payload.competitors or [], payload.aliases or [])
         return {
             "promptPosition": prompt_entry["position"],

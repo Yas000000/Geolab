@@ -115,10 +115,20 @@ async def query_claude(prompt: str) -> PlatformResult:
         return PlatformResult("Claude (Sonnet 4.6)", "", error=str(e))
 
 
-async def query_gemini(prompt: str) -> PlatformResult:
+def _gemini_client():
+    """google-genai 3.0 (2026-11-06) switched its default API version from
+    v1beta to v1, which does not serve gemini-flash-lite-latest: every call
+    returned 404 NOT_FOUND on production once a deploy picked up 3.x. Pinned
+    to v1beta here so the SDK's default can't change the endpoint again."""
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                        http_options=types.HttpOptions(api_version="v1beta"))
+
+
+async def query_gemini(prompt: str) -> PlatformResult:
+    from google.genai import types
+    client = _gemini_client()
     last_err = ""
     for attempt in range(3):
         try:
@@ -205,9 +215,8 @@ async def query_claude_live(prompt: str) -> PlatformResult:
 
 
 async def query_gemini_live(prompt: str) -> PlatformResult:
-    from google import genai
     from google.genai import types
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = _gemini_client()
     last_err = ""
     for attempt in range(3):
         try:

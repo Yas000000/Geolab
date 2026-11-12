@@ -69,10 +69,12 @@ async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> Non
             # Deterministic (synced from geo-rank-checker dba814e) -- otherwise the
             # same answer can yield different brand names run to run, which this
             # portal would show as competitors moving when nothing changed.
-            # Sent via extra_body: anthropic SDK 1.x (what Vercel installs from
-            # requirements.txt) dropped the `temperature` keyword and raises on
-            # it, failing every batch. The API itself still reads the field
-            # for this model (checked 2026-11-06: a 0..1 range error on 7).
+            # Sent via extra_body: anthropic SDK 1.x (pinned in requirements.txt)
+            # dropped the `temperature` keyword and raises on it, failing every
+            # batch. The API itself still reads the field for this model
+            # (checked 2026-11-06: a 0..1 range error on 7). SDK 2.x must not
+            # be installed: its API version 2026-10-21 rejects temperature
+            # outright (400, checked 2026-11-12).
             extra_body={"temperature": 0},
             system=_SYSTEM,
             messages=[{"role": "user", "content": prompt_text}],

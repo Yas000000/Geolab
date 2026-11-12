@@ -1,4 +1,15 @@
-fastapi>=0.117.1
-openai>=1.30.0
-anthropic>=0.28.0
-google-genai>=0.3.0
+# Exact pins: Vercel installs these fresh on every deploy, and with open
+# ranges the 2026-11-11 deploy silently picked up google-genai 3.x, which
+# stopped installing httpx (the SDKs moved to httpx2) and changed Gemini's
+# API version, breaking every Live Search run. Upgrade on purpose, then
+# re-test a Live Search and Check Now before deploying.
+fastapi==0.162.5
+openai==3.49.0
+# Not 2.x: anthropic 2.x sends API version 2026-10-21, which rejects
+# `temperature` ("Extra inputs are not permitted"), and brand_extractor.py
+# needs temperature 0 for stable competitor names. 1.17.0 sends 2023-06-01.
+anthropic==1.17.0
+google-genai==3.2.0
+# Imported directly (Perplexity, Gemini citation redirects, the crawler
+# check), so listed here rather than relied on as an SDK dependency.
+httpx==0.28.1
