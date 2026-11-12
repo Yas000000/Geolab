@@ -14,6 +14,8 @@ algorithm change.
 
 import asyncio
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -236,9 +238,8 @@ async def _gemini_citations(resp) -> list[dict]:
     the redirect URL is kept and the domain comes from the title, so the
     citation still counts toward the right site.
 
-    NOT live-confirmed: every grounded Gemini call on this account has
-    returned 429 RESOURCE_EXHAUSTED (re-checked 2026-11-06). Read defensively
-    from Google's documented shape; check the first real Gemini citations.
+    Live-confirmed 2026-11-11 once the new paid-tier key was in place: a
+    grounded answer returned 6 chunks, all resolved to real pages.
     """
     candidate = resp.candidates[0] if getattr(resp, "candidates", None) else None
     meta = getattr(candidate, "grounding_metadata", None) if candidate else None
@@ -274,7 +275,95 @@ async def _gemini_citations(resp) -> list[dict]:
     return _dedupe_citations(pairs, hints)
 
 
-# Registry — add perplexity here when key is available
+# --- Perplexity, Live Search only. Perplexity always searches the web before
+# answering, so it has no Training Search equivalent and sits in PLATFORMS_LIVE
+# only. Its Sonar Chat Completions API ended 2026-09-27; this uses the Agent
+# API pinned to model perplexity/sonar (its `effort` presets route to OpenAI
+# models, which would not be Perplexity's own answer). Request and response
+# shape checked against a real call on 2026-11-11.
+
+_PPLX_URL = "https://api.perplexity.ai/v1/agent"
+_PPLX_MODEL_ID = "Perplexity (Sonar, live search)"  # "live search" tag: see src/lib/citations.ts
+# Tier 1 allows 3 requests/second for the whole Perplexity account, and the
+# pipeline starts up to PER_PROVIDER_CONCURRENCY calls at once, so request
+# starts are spaced 0.4s apart (2.5/s). No lock needed: asyncio is single-
+# threaded and the read-update below has no await in between.
+_PPLX_MIN_INTERVAL = 0.4
+_pplx_next_start = 0.0
+_WEB_MARKER = re.compile(r"\[web:\d+\]")
+
+
+async def _pplx_wait_turn() -> None:
+    global _pplx_next_start
+    now = time.monotonic()
+    start = max(now, _pplx_next_start)
+    _pplx_next_start = start + _PPLX_MIN_INTERVAL
+    if start > now:
+        await asyncio.sleep(start - now)
+
+
+async def query_perplexity_live(prompt: str) -> PlatformResult:
+    import httpx
+
+    body = {
+        "model": "perplexity/sonar",
+        "instructions": _LIVE_SEARCH_SYSTEM_PROMPT,
+        "input": prompt,
+        "tools": [{"type": "web_search"}],
+        "max_output_tokens": 4096,
+    }
+    headers = {"Authorization": f"Bearer {os.environ['PERPLEXITY_API_KEY']}"}
+    last_err = ""
+    for attempt in range(4):
+        await _pplx_wait_turn()
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as http:
+                r = await http.post(_PPLX_URL, json=body, headers=headers)
+        except httpx.HTTPError as e:
+            last_err = f"{type(e).__name__}: {e}"
+            await asyncio.sleep(5 * (attempt + 1))
+            continue
+        if r.status_code == 429:
+            # request_rate_limit_exceeded / token_rate_limit_exceeded:
+            # Retry-After is normally 1s, up to ~10s of jitter for tokens.
+            last_err = f"429: {r.text[:300]}"
+            try:
+                wait = float(r.headers.get("retry-after", "1"))
+            except ValueError:
+                wait = 1.0
+            await asyncio.sleep(min(max(wait, 1.0), 15.0))
+            continue
+        if r.status_code >= 500:
+            last_err = f"{r.status_code}: {r.text[:300]}"
+            await asyncio.sleep(5 * (attempt + 1))
+            continue
+        if r.status_code != 200:
+            return PlatformResult(_PPLX_MODEL_ID, "", error=f"{r.status_code}: {r.text[:500]}")
+
+        data = r.json()
+        if data.get("status") == "failed" or data.get("error"):
+            return PlatformResult(_PPLX_MODEL_ID, "", error=str(data.get("error") or "status failed"))
+        texts, pairs = [], []
+        for item in data.get("output") or []:
+            if item.get("type") == "message":
+                for block in item.get("content") or []:
+                    if block.get("type") == "output_text":
+                        texts.append(block.get("text") or "")
+            elif item.get("type") == "search_results":
+                for res in sorted(item.get("results") or [], key=lambda x: x.get("id") or 0):
+                    pairs.append((res.get("url"), res.get("title") or ""))
+        # Citations = every page in the answer's search_results, the list
+        # Perplexity shows as Sources under each answer (the old Sonar API's
+        # `citations` field was this same list). The answer text itself
+        # carries no annotations, and in the 2026-11-11 test no [web:n]
+        # markers either, only a model-written "Sources:" line whose URLs
+        # can be mangled, so the text is not used for citations. Any
+        # [web:n] markers are stripped so they can't break brand matching.
+        text = _WEB_MARKER.sub("", "\n".join(t for t in texts if t)).strip()
+        return PlatformResult(_PPLX_MODEL_ID, text, citations=_dedupe_citations(pairs))
+    return PlatformResult(_PPLX_MODEL_ID, "", error=last_err or "Perplexity request failed")
+
+
 PLATFORMS = {
     "openai": query_openai,
     "claude": query_claude,
@@ -285,4 +374,5 @@ PLATFORMS_LIVE = {
     "openai": query_openai_live,
     "claude": query_claude_live,
     "gemini": query_gemini_live,
+    "perplexity": query_perplexity_live,
 }

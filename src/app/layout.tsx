@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "GEO Reporting Portal",
-  description: "AI visibility tracking across ChatGPT, Claude, and Gemini",
+  description: "AI visibility tracking across ChatGPT, Claude, Gemini and Perplexity",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

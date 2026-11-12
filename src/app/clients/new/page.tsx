@@ -9,10 +9,9 @@ const PLATFORM_OPTIONS = [
   { key: "openai", label: "ChatGPT", disabled: false },
   { key: "claude", label: "Claude", disabled: false },
   { key: "gemini", label: "Gemini", disabled: false },
-  // Not wired into the pipeline yet -- python_pipeline/platforms.py's
-  // PLATFORMS registry has no Perplexity entry until a real API key exists.
-  // Shown disabled rather than omitted so the four-platform slot is visible
-  // now and just needs enabling once the key is available.
+  // A new client's first run is a Training Search, and Perplexity always
+  // searches the web, so it only runs in Live Search (Run Now's Live Search
+  // button includes it automatically). Shown disabled so it's clear why.
   { key: "perplexity", label: "Perplexity", disabled: true },
 ];
 
@@ -224,7 +223,7 @@ export default function NewClientPage() {
                     className="h-4 w-4 rounded border-zinc-300 disabled:cursor-not-allowed dark:border-zinc-700"
                   />
                   {p.label}
-                  {p.disabled && <span className="text-xs">(needs API key)</span>}
+                  {p.disabled && <span className="text-xs">(Live Search only)</span>}
                 </label>
               ))}
             </div>

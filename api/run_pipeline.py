@@ -11,6 +11,9 @@ from python_pipeline.brand_extractor import extract_brands
 app = FastAPI()
 
 DEFAULT_PLATFORMS = ["openai", "claude", "gemini"]
+# Perplexity always searches the web, so it has no Training Search mode and
+# only joins Live Search runs (python_pipeline/platforms.py).
+DEFAULT_PLATFORMS_LIVE = DEFAULT_PLATFORMS + ["perplexity"]
 # Raised from 5 -- confirmed live (2026-10-12) that a real Live Search run
 # (55 prompts, concurrency 5) exceeded this route's 300s maxDuration and got
 # hard-killed by the platform before completing (Training Search on the same
@@ -104,10 +107,13 @@ def _build_manual_prompt_groups(prompts: list[PromptInput]) -> tuple[list, list]
 @app.post("/api/run_pipeline")
 async def run_pipeline(payload: RunPipelineRequest) -> dict:
     platform_registry = PLATFORMS_LIVE if payload.live_search else PLATFORMS
-    platforms_requested = payload.platforms or DEFAULT_PLATFORMS
+    platforms_requested = payload.platforms or (DEFAULT_PLATFORMS_LIVE if payload.live_search else DEFAULT_PLATFORMS)
     selected = {k: platform_registry[k] for k in platforms_requested if k in platform_registry}
     generation_warnings = []
-    unknown = [k for k in platforms_requested if k not in platform_registry]
+    live_only = [k for k in platforms_requested if k not in platform_registry and k in PLATFORMS_LIVE]
+    if live_only:
+        generation_warnings.append(f"Live Search only, skipped in Training Search: {', '.join(live_only)}")
+    unknown = [k for k in platforms_requested if k not in platform_registry and k not in PLATFORMS_LIVE]
     if unknown:
         generation_warnings.append(f"Unknown platform(s) ignored: {', '.join(unknown)}")
 

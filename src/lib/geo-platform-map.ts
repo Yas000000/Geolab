@@ -2,6 +2,7 @@ export const PLATFORM_MAP = {
   openai: "CHATGPT",
   claude: "CLAUDE",
   gemini: "GEMINI",
+  perplexity: "PERPLEXITY", // Live Search runs only (python_pipeline/platforms.py)
 } as const;
 
 // DB enum value (RawResponse.platform) -> display label.
