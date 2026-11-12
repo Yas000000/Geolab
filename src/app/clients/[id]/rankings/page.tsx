@@ -6,8 +6,8 @@ import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
 import {
   CompetitorRankChart,
+  type BrandCrawlPoint,
   type RankCrawl,
-  type RankPoint,
   type RankSeries,
 } from "@/components/competitor-rank-chart";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
@@ -432,26 +432,40 @@ function buildDashboardData(
   const rankKeys = brandTable.slice(0, RANK_CHART_BRANDS).map((b) => b.key);
   const clientRow = brandTable.find((b) => b.isClientBrand);
   if (clientRow && !rankKeys.includes(clientRow.key)) rankKeys.push(clientRow.key);
+  // Position / Visibility / Share of Voice per crawl use the table's own
+  // formulas (avg list position; mentions / answers; mentions / all brands'
+  // mentions), scoped to that crawl.
   const rankCrawls: RankCrawl[] = [];
-  const rankPoints = new Map<string, (RankPoint | null)[]>(rankKeys.map((k) => [k, []]));
+  const rankPoints = new Map<string, BrandCrawlPoint[]>(rankKeys.map((k) => [k, []]));
   for (const run of primaryRuns) {
+    const matching = run.rawResponses.filter(matchesPlatform);
     const counts = new Map<string, number>();
-    for (const r of run.rawResponses.filter(matchesPlatform)) {
+    const positions = new Map<string, number[]>();
+    for (const r of matching) {
       for (const m of r.parsedResult?.mentions ?? []) {
         const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
         counts.set(key, (counts.get(key) ?? 0) + 1);
+        if (m.position != null) positions.set(key, [...(positions.get(key) ?? []), m.position]);
       }
     }
     if (counts.size === 0) continue; // no answers (or no brands) for this filter in this crawl
     const sortedCounts = Array.from(counts.values()).sort((a, b) => b - a);
+    const totalMentions = sortedCounts.reduce((a, c) => a + c, 0);
     rankCrawls.push({
       runId: run.id,
       dateLabel: crawlDay(run.startedAt),
       isTraining: !run.rawResponses.some((r) => isLiveSearchModel(r.modelId)),
     });
     for (const key of rankKeys) {
-      const n = counts.get(key);
-      rankPoints.get(key)!.push(n ? { rank: sortedCounts.indexOf(n) + 1, mentions: n } : null);
+      const n = counts.get(key) ?? 0;
+      const pos = positions.get(key) ?? [];
+      rankPoints.get(key)!.push({
+        mentions: n,
+        rank: n ? sortedCounts.indexOf(n) + 1 : null,
+        avgPosition: pos.length ? pos.reduce((a, c) => a + c, 0) / pos.length : null,
+        visibilityPct: (n / matching.length) * 100,
+        sovPct: (n / totalMentions) * 100,
+      });
     }
   }
   const rankSeries: RankSeries[] = rankKeys.map((key) => {
@@ -733,14 +747,7 @@ export default async function ClientRankingsPage({
           Competitors
         </h2>
         {brandTable.length > 0 && rankCrawls.length > 0 && (
-          <>
-            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Each brand&apos;s rank in each crawl by number of mentions, #1 at the top. Shows this range&apos;s top{" "}
-              {RANK_CHART_BRANDS} brands, plus you if you&apos;re outside them. The table below ranks across the whole
-              range, so its order can differ from any single crawl. Hover the chart for each crawl&apos;s ranks.
-            </p>
-            <CompetitorRankChart crawls={rankCrawls} series={rankSeries} />
-          </>
+          <CompetitorRankChart crawls={rankCrawls} series={rankSeries} brandCount={RANK_CHART_BRANDS} />
         )}
         {brandTable.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
