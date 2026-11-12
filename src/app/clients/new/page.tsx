@@ -95,7 +95,7 @@ export default function NewClientPage() {
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
-      <div className="mx-auto max-w-2xl px-6 py-10">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 md:py-10">
         <Link
           href="/clients"
           className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"

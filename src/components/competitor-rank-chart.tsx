@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { labelStride, useChartWidth } from "@/lib/use-chart-width";
 
 // Chart for the Rankings page's Competitors section: one line per brand
 // across crawls, for a metric picked from a dropdown -- Rank (a bump chart,
@@ -88,7 +89,6 @@ const SLOTS = [
 ];
 
 const MAX_SHOWN_RANK = 10; // ranks below this sit on one ">10" row so one outlier can't squash the chart
-const WIDTH = 800;
 const ROW_H = 26;
 const CONTINUOUS_H = MAX_SHOWN_RANK * ROW_H; // plot height for Position / Visibility / Share of Voice
 const PADDING = { top: 14, right: 28, bottom: 40, left: 44 };
@@ -157,6 +157,14 @@ export function CompetitorRankChart({
   const [metric, setMetric] = useState<Metric>("rank");
   const [hoverCrawl, setHoverCrawl] = useState<number | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [plotRef, width] = useChartWidth();
+  // Tooltip width, measured after it renders, so it can be clamped inside
+  // the plot instead of hanging off the screen edge on a phone.
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [tipW, setTipW] = useState(0);
+  useLayoutEffect(() => {
+    if (tipRef.current) setTipW(tipRef.current.offsetWidth);
+  }, [hoverCrawl, metric, width]);
 
   if (crawls.length === 0 || series.length === 0) return null;
 
@@ -166,11 +174,26 @@ export function CompetitorRankChart({
   const allValues = series.flatMap((s) => valuesOf(s).filter((v): v is number => v != null));
   const scale = buildScale(metric, allValues);
   const height = PADDING.top + scale.innerH + PADDING.bottom;
-  const innerWidth = WIDTH - PADDING.left - PADDING.right;
+  const innerWidth = width - PADDING.left - PADDING.right;
 
   const xFor = (i: number) =>
     crawls.length === 1 ? PADDING.left + innerWidth / 2 : PADDING.left + (i / (crawls.length - 1)) * innerWidth;
   const colHalf = crawls.length === 1 ? innerWidth / 2 : innerWidth / (crawls.length - 1) / 2;
+  const stride = labelStride(crawls.length, innerWidth);
+  const lastCrawl = crawls.length - 1;
+
+  // Beside the point at the ends, centred elsewhere, then clamped to the plot.
+  let tipLeft = 0;
+  if (hoverCrawl != null) {
+    const x = xFor(hoverCrawl);
+    const ideal =
+      crawls.length > 1 && hoverCrawl === 0
+        ? x + 8
+        : crawls.length > 1 && hoverCrawl === lastCrawl
+          ? x - tipW - 8
+          : x - tipW / 2;
+    tipLeft = Math.max(0, Math.min(ideal, width - tipW));
+  }
   const dimmed = (key: string) => highlight != null && highlight !== key;
 
   // Draw order: competitors first, client last so its line sits on top.
@@ -193,8 +216,8 @@ export function CompetitorRankChart({
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs text-zinc-500 sm:flex-1 dark:text-zinc-400">
           {spec.caption} Shows this range&apos;s top {brandCount} brands, plus you if you&apos;re outside them. The table
-          below covers the whole range, so its numbers can differ from any single crawl. Hover the chart for each
-          crawl&apos;s numbers.
+          below covers the whole range, so its numbers can differ from any single crawl. Hover or tap the chart for
+          each crawl&apos;s numbers.
         </p>
         <label className="flex min-w-0 shrink-0 items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           Show
@@ -241,9 +264,9 @@ export function CompetitorRankChart({
           ))}
         </div>
 
-        <div className="relative">
+        <div ref={plotRef} className="relative">
           <svg
-            viewBox={`0 0 ${WIDTH} ${height}`}
+            viewBox={`0 0 ${width} ${height}`}
             className="h-auto w-full"
             role="img"
             aria-label={`Competitor ${spec.label.toLowerCase()} in each crawl`}
@@ -254,7 +277,7 @@ export function CompetitorRankChart({
               <g key={t.label}>
                 <line
                   x1={PADDING.left}
-                  x2={WIDTH - PADDING.right}
+                  x2={width - PADDING.right}
                   y1={t.y}
                   y2={t.y}
                   stroke="currentColor"
@@ -273,7 +296,7 @@ export function CompetitorRankChart({
               </g>
             ))}
 
-            {crawls.map((c, i) => (
+            {crawls.map((c, i) => (lastCrawl - i) % stride === 0 && (
               <text key={c.runId} x={xFor(i)} y={height - 20} textAnchor="middle" className="fill-zinc-400 text-[10px] dark:fill-zinc-600">
                 {c.dateLabel}
                 {c.isTraining && (
@@ -350,20 +373,16 @@ export function CompetitorRankChart({
                 height={height}
                 fill="transparent"
                 onMouseEnter={() => setHoverCrawl(i)}
+                onClick={() => setHoverCrawl(i)}
               />
             ))}
           </svg>
 
           {hoverCrawl != null && (
             <div
-              className={`pointer-events-none absolute top-0 z-10 whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-900 ${
-                hoverCrawl === 0 && crawls.length > 1
-                  ? "translate-x-2"
-                  : hoverCrawl === crawls.length - 1 && crawls.length > 1
-                    ? "-translate-x-[calc(100%+8px)]"
-                    : "-translate-x-1/2"
-              }`}
-              style={{ left: `${(xFor(hoverCrawl) / WIDTH) * 100}%` }}
+              ref={tipRef}
+              className="pointer-events-none absolute top-0 z-10 max-w-full whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+              style={{ left: tipLeft, visibility: tipW ? "visible" : "hidden" }}
             >
               <div className="mb-1 font-medium text-zinc-900 dark:text-zinc-100">
                 {crawls[hoverCrawl].dateLabel} crawl
@@ -374,7 +393,7 @@ export function CompetitorRankChart({
               {hovered.map(({ s, p, v }) => (
                 <div key={s.key} className="flex items-center gap-2 py-px">
                   <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${slot.get(s.key)!.bg}`} />
-                  <span className={`flex-1 ${s.isClientBrand ? "font-semibold text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}>
+                  <span className={`min-w-0 flex-1 truncate ${s.isClientBrand ? "font-semibold text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}>
                     {s.name}
                   </span>
                   <span className="tabular-nums text-zinc-900 dark:text-zinc-100">

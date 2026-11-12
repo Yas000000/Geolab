@@ -336,8 +336,19 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
       )}
 
       {open && (
-        <div className="absolute right-0 z-20 mt-2 flex rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-          <div className="border-r border-zinc-200 p-4 dark:border-zinc-800">
+        // Below md the picker is a full-width sheet with one month, not a
+        // ~750px two-month popover anchored off the left edge of a phone.
+        // The backdrop is inside containerRef, so the outside-click handler
+        // won't see taps on it -- it closes the sheet itself.
+        <div
+          className="fixed inset-0 z-20 bg-black/30 md:hidden"
+          onClick={() => setOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      {open && (
+        <div className="fixed inset-x-4 top-4 z-30 flex max-h-[calc(100dvh-2rem)] flex-col overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-xl md:absolute md:inset-x-auto md:top-auto md:right-0 md:z-20 md:mt-2 md:max-h-none md:flex-row md:overflow-visible dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="border-b border-zinc-200 p-4 md:border-r md:border-b-0 dark:border-zinc-800">
             <div className="mb-2 flex items-center justify-between text-zinc-500 dark:text-zinc-400">
               <div className="flex gap-1">
                 <button type="button" onClick={() => setVisibleMonth((m) => new Date(m.getFullYear() - 1, m.getMonth(), 1))} className="px-1 text-xs">
@@ -356,7 +367,7 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
                 </button>
               </div>
             </div>
-            <div className="flex gap-6" onMouseLeave={() => setHoverDate(null)}>
+            <div className="flex justify-center gap-6" onMouseLeave={() => setHoverDate(null)}>
               <CalendarMonth
                 monthDate={visibleMonth}
                 start={pendingStart}
@@ -365,18 +376,20 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
                 onDayClick={handleDayClick}
                 onDayHover={setHoverDate}
               />
-              <CalendarMonth
-                monthDate={secondMonth}
-                start={pendingStart}
-                end={pendingEnd}
-                hoverEnd={hoverDate}
-                onDayClick={handleDayClick}
-                onDayHover={setHoverDate}
-              />
+              <div className="hidden md:block">
+                <CalendarMonth
+                  monthDate={secondMonth}
+                  start={pendingStart}
+                  end={pendingEnd}
+                  hoverEnd={hoverDate}
+                  onDayClick={handleDayClick}
+                  onDayHover={setHoverDate}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="w-72 p-4">
+          <div className="w-full p-4 md:w-72">
             <div className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Date Range</div>
             <div className="relative mb-3">
               <button

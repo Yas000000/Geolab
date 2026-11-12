@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useRef } from "react";
 
 const NAV_ITEMS = [
   { segment: "traffic", label: "GEO Traffic" },
@@ -28,8 +29,22 @@ export function ClientNav({ clientId }: { clientId: string }) {
   }
   const qs = carried.toString();
 
+  // On phones the nav is a horizontally scrolling tab row; tabs past the edge
+  // (e.g. Settings) would otherwise load scrolled out of view.
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !active || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollLeft = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2;
+  }, [pathname]);
+
   return (
-    <nav className="w-44 shrink-0 space-y-1">
+    <nav
+      ref={navRef}
+      aria-label="Client sections"
+      className="relative -mx-4 flex gap-1 overflow-x-auto px-4 sm:-mx-6 sm:px-6 md:mx-0 md:block md:w-44 md:shrink-0 md:space-y-1 md:overflow-visible md:px-0"
+    >
       {NAV_ITEMS.map((item) => {
         const href = `/clients/${clientId}/${item.segment}${qs ? `?${qs}` : ""}`;
         const active = pathname === `/clients/${clientId}/${item.segment}` || pathname.startsWith(`/clients/${clientId}/${item.segment}/`);
@@ -37,7 +52,8 @@ export function ClientNav({ clientId }: { clientId: string }) {
           <Link
             key={item.segment}
             href={href}
-            className={`block rounded-md px-3 py-2 text-sm font-medium ${
+            aria-current={active ? "page" : undefined}
+            className={`block shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
               active
                 ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
                 : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"

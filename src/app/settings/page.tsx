@@ -24,7 +24,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
-      <div className="mx-auto max-w-2xl px-6 py-10">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 md:py-10">
         <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">Settings</h1>
 
         <div className="mt-6 rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">

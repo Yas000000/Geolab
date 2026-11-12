@@ -181,7 +181,7 @@ export default async function RunPage({
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
-      <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 md:py-10">
         <header className="mb-8">
           <Link
             href={`/clients/${run.client.id}/settings`}

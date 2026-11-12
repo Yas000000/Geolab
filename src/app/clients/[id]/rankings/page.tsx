@@ -81,6 +81,13 @@ type PromptChangeMode = "firstLatest" | "period" | "periodEmpty";
 // Brands shown in the Competitors section's rank-by-crawl chart.
 const RANK_CHART_BRANDS = 5;
 
+// Prompt Rankings' first column: pinned while the platform columns scroll
+// sideways, wide enough that a prompt isn't one word per line on a phone.
+// The divider is an inset shadow because a collapsed-table border doesn't
+// travel with a sticky cell. Each cell still sets its own background.
+const PROMPT_COL =
+  "sticky left-0 z-[1] min-w-[11rem] shadow-[inset_-1px_0_0_var(--color-zinc-200)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-800)]";
+
 // Failed calls (blank answers) are excluded in getClient's query, so every
 // response here is a real answer and only those count as a crawl.
 const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -570,7 +577,7 @@ export default async function ClientRankingsPage({
           <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">{client.name}</h1>
           {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <ModelFilter platforms={platformsAvailable.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p }))} />
           <DateRangePicker allTimeRange={allTimeRange} />
         </div>
@@ -637,7 +644,8 @@ export default async function ClientRankingsPage({
                   <table className="w-full text-sm">
                     <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                       <tr>
-                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium">
+                        {/* Prompt column stays pinned while the platform columns scroll sideways (phones). */}
+                        <th rowSpan={2} className={`${PROMPT_COL} bg-zinc-100 px-4 py-2 align-bottom font-medium dark:bg-zinc-900`}>
                           Prompt
                         </th>
                         {platformsAvailable.map((platform) => (
@@ -673,7 +681,7 @@ export default async function ClientRankingsPage({
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                       {prompts.map((p) => (
                         <tr key={p.key} className="bg-white dark:bg-zinc-950">
-                          <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{p.text}</td>
+                          <td className={`${PROMPT_COL} bg-white px-4 py-2 text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300`}>{p.text}</td>
                           {platformsAvailable.map((platform) => {
                             const cell = p.platforms[platform];
                             return (
