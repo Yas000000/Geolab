@@ -52,9 +52,26 @@ interface BrandRow {
 
 interface PlatformRankCell {
   avgRank: number | null;
-  movement: number | null; // + = improved (moved up) vs. the comparison period, - = dropped. null when there's no comparison period selected or no rank data on one side.
+  movement: number | null; // + = improved (moved up), - = dropped. null when there's nothing to compare or no rank on one side.
+  // First-vs-latest mode only: ranked in the latest crawl but not the first
+  // ("new"), or the reverse ("lost"). A numeric movement needs a rank on both
+  // sides, and most first crawls didn't rank the client at all.
+  status: "new" | "lost" | null;
+  changeTitle: string | null; // hover text spelling out what the Change cell compares
   checks: number;
 }
+
+// What the Prompt Rankings Change columns compare. No "Compare To" picked:
+// each prompt's most recent crawl vs. its first crawl in the date range.
+// "periodEmpty": a Compare To period is picked but has no crawls in it.
+type PromptChangeMode = "firstLatest" | "period" | "periodEmpty";
+
+const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+// A blank responseText is a failed call (e.g. Gemini's quota errors before
+// 2026-11-12), not an answer that left the client out, so it never counts
+// as a crawl for first-vs-latest Change.
+const answered = (r: RawResponseData) => r.responseText.trim().length > 0;
 
 interface PromptRankRow {
   key: string;
@@ -63,7 +80,8 @@ interface PromptRankRow {
   checks: number;
   mentioned: number;
   visibilityPct: number;
-  visibilityChange: number | null; // pp change vs. the comparison period
+  visibilityChange: number | null; // pp change vs. the comparison period, or latest vs. first crawl
+  visibilityChangeTitle: string | null;
   top3Rate: number | null; // % of mentions (not of all checks) that ranked top-3
   shareOfVoicePct: number | null; // this prompt's client-brand mentions as a % of all brands' mentions on this prompt
   platforms: Record<string, PlatformRankCell>;
@@ -81,21 +99,28 @@ function inDateWindow(date: Date, range: DateRange | null): boolean {
   return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
 }
 
-// Per-platform columns, each with its own +/- Change vs. the comparison period
-// chosen in the date-picker's "Compare To" selector -- the same mechanism
-// already driving the Competitors table's Change column, so the numbers
-// actually move when the date range changes instead of being pinned to a
-// fixed historical reference.
+// Per-platform columns, each with its own +/- Change. With a "Compare To"
+// period picked in the date picker, Change is vs. that period -- the same
+// mechanism driving the Competitors table's Change column. Without one, it
+// is each prompt's most recent crawl vs. its first crawl in the range.
 function buildPromptRankings(
   primaryRuns: RunData[],
   comparisonRuns: RunData[],
-  hasComparison: boolean,
+  mode: PromptChangeMode,
   platforms: string[],
 ): PromptRankRow[] {
+  const hasComparison = mode === "period";
+  interface CrawlPoint {
+    runId: string;
+    date: Date;
+    rank: number | null; // null = answered but didn't rank the client
+  }
   interface PlatformAcc {
     primaryRanks: number[];
     primaryChecks: number;
     comparisonRanks: number[];
+    first: CrawlPoint | null;
+    latest: CrawlPoint | null;
   }
   interface Acc {
     text: string;
@@ -108,13 +133,15 @@ function buildPromptRankings(
     comparisonChecks: number;
     comparisonMentioned: number;
     byPlatform: Map<string, PlatformAcc>;
+    // Answered checks per run, for first-vs-latest Visibility Change.
+    byRun: Map<string, { date: Date; checks: number; mentioned: number }>;
   }
   const acc = new Map<string, Acc>();
 
   function ensurePlatform(a: Acc, platform: string): PlatformAcc {
     let p = a.byPlatform.get(platform);
     if (!p) {
-      p = { primaryRanks: [], primaryChecks: 0, comparisonRanks: [] };
+      p = { primaryRanks: [], primaryChecks: 0, comparisonRanks: [], first: null, latest: null };
       a.byPlatform.set(platform, p);
     }
     return p;
@@ -136,6 +163,7 @@ function buildPromptRankings(
           comparisonChecks: 0,
           comparisonMentioned: 0,
           byPlatform: new Map(),
+          byRun: new Map(),
         };
         acc.set(key, a);
       }
@@ -150,6 +178,19 @@ function buildPromptRankings(
           platformAcc.primaryRanks.push(rank);
           if (rank <= 3) a.top3Count += 1;
         }
+      }
+      if (answered(r)) {
+        const point: CrawlPoint = {
+          runId: run.id,
+          date: run.startedAt,
+          rank: mentioned ? (r.parsedResult?.clientBrandRank ?? null) : null,
+        };
+        if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
+        if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
+        const v = a.byRun.get(run.id) ?? { date: run.startedAt, checks: 0, mentioned: 0 };
+        v.checks += 1;
+        if (mentioned) v.mentioned += 1;
+        a.byRun.set(run.id, v);
       }
       for (const m of r.parsedResult?.mentions ?? []) {
         a.totalMentionRows += 1;
@@ -178,19 +219,57 @@ function buildPromptRankings(
 
   const avg = (arr: number[]) => (arr.length ? arr.reduce((a, c) => a + c, 0) / arr.length : null);
 
+  function firstLatestRankChange(p: PlatformAcc | undefined): Pick<PlatformRankCell, "movement" | "status" | "changeTitle"> {
+    const f = p?.first;
+    const l = p?.latest;
+    if (!f || !l) return { movement: null, status: null, changeTitle: null };
+    if (f.runId === l.runId) {
+      return { movement: null, status: null, changeTitle: `Only one crawl with an answer so far (${crawlDay(l.date)})` };
+    }
+    const describe = (pt: CrawlPoint) => (pt.rank != null ? `#${pt.rank}` : "not ranked");
+    const changeTitle = `${describe(f)} on ${crawlDay(f.date)} → ${describe(l)} on ${crawlDay(l.date)}`;
+    if (f.rank != null && l.rank != null) return { movement: f.rank - l.rank, status: null, changeTitle };
+    if (f.rank == null && l.rank != null) return { movement: null, status: "new", changeTitle };
+    if (f.rank != null && l.rank == null) return { movement: null, status: "lost", changeTitle };
+    return { movement: null, status: null, changeTitle };
+  }
+
   return Array.from(acc.entries())
     .map(([key, a]) => {
       const platformCells: Record<string, PlatformRankCell> = {};
       for (const platform of platforms) {
         const p = a.byPlatform.get(platform);
         const avgRank = p ? avg(p.primaryRanks) : null;
-        const comparisonAvgRank = p ? avg(p.comparisonRanks) : null;
-        const movement = hasComparison && avgRank != null && comparisonAvgRank != null ? comparisonAvgRank - avgRank : null;
-        platformCells[platform] = { avgRank, movement, checks: p?.primaryChecks ?? 0 };
+        let change: Pick<PlatformRankCell, "movement" | "status" | "changeTitle"> = {
+          movement: null,
+          status: null,
+          changeTitle: null,
+        };
+        if (mode === "firstLatest") {
+          change = firstLatestRankChange(p);
+        } else if (hasComparison) {
+          const comparisonAvgRank = p ? avg(p.comparisonRanks) : null;
+          if (avgRank != null && comparisonAvgRank != null) change = { ...change, movement: comparisonAvgRank - avgRank };
+        }
+        platformCells[platform] = { avgRank, ...change, checks: p?.primaryChecks ?? 0 };
       }
       const visibilityPct = a.checks ? (a.mentioned / a.checks) * 100 : 0;
-      const comparisonVisibilityPct = a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null;
-      const visibilityChange = hasComparison && comparisonVisibilityPct != null ? visibilityPct - comparisonVisibilityPct : null;
+      let visibilityChange: number | null = null;
+      let visibilityChangeTitle: string | null = null;
+      if (mode === "firstLatest") {
+        const crawls = Array.from(a.byRun.values()).sort((x, y) => x.date.getTime() - y.date.getTime());
+        if (crawls.length >= 2) {
+          const f = crawls[0];
+          const l = crawls[crawls.length - 1];
+          const fPct = (f.mentioned / f.checks) * 100;
+          const lPct = (l.mentioned / l.checks) * 100;
+          visibilityChange = lPct - fPct;
+          visibilityChangeTitle = `${fPct.toFixed(0)}% on ${crawlDay(f.date)} → ${lPct.toFixed(0)}% on ${crawlDay(l.date)}`;
+        }
+      } else if (hasComparison) {
+        const comparisonVisibilityPct = a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null;
+        if (comparisonVisibilityPct != null) visibilityChange = visibilityPct - comparisonVisibilityPct;
+      }
 
       return {
         key,
@@ -200,6 +279,7 @@ function buildPromptRankings(
         mentioned: a.mentioned,
         visibilityPct,
         visibilityChange,
+        visibilityChangeTitle,
         top3Rate: a.mentioned ? (a.top3Count / a.mentioned) * 100 : null,
         shareOfVoicePct: a.totalMentionRows ? (a.clientMentionRows / a.totalMentionRows) * 100 : null,
         platforms: platformCells,
@@ -335,7 +415,21 @@ function buildDashboardData(
     })
     .sort((a, b) => b.appearances - a.appearances);
 
-  const promptRankings = buildPromptRankings(primaryRuns, comparisonRuns, hasComparison, platformsAvailable);
+  // Prompt Rankings ignores the Models filter, so whether its comparison
+  // period has data is checked on the unfiltered runs (hasComparison above
+  // uses the filtered count, which would blank this table's Change for every
+  // platform when filtering to one the comparison period lacks).
+  const promptChangeMode: PromptChangeMode = !comparisonRange
+    ? "firstLatest"
+    : comparisonRuns.some((run) => run.rawResponses.length > 0)
+      ? "period"
+      : "periodEmpty";
+  const promptRankings = buildPromptRankings(primaryRuns, comparisonRuns, promptChangeMode, platformsAvailable);
+  const answeredRuns = primaryRuns.filter((run) => run.rawResponses.some(answered));
+  const crawlSpan =
+    answeredRuns.length >= 2
+      ? { first: crawlDay(answeredRuns[0].startedAt), latest: crawlDay(answeredRuns[answeredRuns.length - 1].startedAt) }
+      : null;
 
   return {
     platformsAvailable,
@@ -346,6 +440,8 @@ function buildDashboardData(
     totalResponses,
     brandTable,
     promptRankings,
+    promptChangeMode,
+    crawlSpan,
     benchmarksInRange,
     allTimeRange,
   };
@@ -389,6 +485,8 @@ export default async function ClientRankingsPage({
     totalResponses,
     brandTable,
     promptRankings,
+    promptChangeMode,
+    crawlSpan,
     benchmarksInRange,
     allTimeRange,
   } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
@@ -454,9 +552,13 @@ export default async function ClientRankingsPage({
         </h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
           Shown per platform regardless of the Models filter above.
-          {hasComparison
+          {promptChangeMode === "period"
             ? " Change is vs. the comparison period selected in the date picker."
-            : " Pick a \"Compare To\" period in the date picker to see Change."}
+            : promptChangeMode === "periodEmpty"
+              ? " No crawls fall in the selected Compare To period, so Change is blank."
+              : crawlSpan
+                ? ` Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). New means ranked now but not in the first crawl, Lost means the reverse. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`
+                : " Change needs at least two crawls in this range. Pick a \"Compare To\" period in the date picker to compare periods instead."}
         </p>
         {promptRankings.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
@@ -517,8 +619,12 @@ export default async function ClientRankingsPage({
                                 <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
                                   {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
                                 </td>
-                                <td className="px-3 py-2 text-right tabular-nums">
-                                  {cell?.movement == null ? (
+                                <td className="px-3 py-2 text-right tabular-nums" title={cell?.changeTitle ?? undefined}>
+                                  {cell?.status === "new" ? (
+                                    <span className="text-emerald-600 dark:text-emerald-400">New</span>
+                                  ) : cell?.status === "lost" ? (
+                                    <span className="text-red-600 dark:text-red-400">Lost</span>
+                                  ) : cell?.movement == null ? (
                                     <span className="text-zinc-300 dark:text-zinc-700">—</span>
                                   ) : (
                                     <span
@@ -541,7 +647,7 @@ export default async function ClientRankingsPage({
                           <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
                             {p.visibilityPct.toFixed(0)}%
                           </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
+                          <td className="px-3 py-2 text-right tabular-nums" title={p.visibilityChangeTitle ?? undefined}>
                             {p.visibilityChange == null ? (
                               <span className="text-zinc-300 dark:text-zinc-700">—</span>
                             ) : (
