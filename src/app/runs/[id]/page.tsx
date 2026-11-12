@@ -154,7 +154,16 @@ export default async function RunPage({
   const run = await getRun(id);
   if (!run) notFound();
 
-  const stats = computeStats(run.rawResponses);
+  // Stats count real answers only: empty text = a failed call (e.g. Gemini
+  // quota errors), not an answer that left the client out. Same rule as the
+  // Rankings and Citations pages. Failed calls still show in the grid below.
+  const answers = run.rawResponses.filter((r) => r.responseText !== "");
+  const failedCalls = run.rawResponses.length - answers.length;
+  const failedByPlatform = new Map<string, number>();
+  for (const r of run.rawResponses) {
+    if (r.responseText === "") failedByPlatform.set(r.platform, (failedByPlatform.get(r.platform) ?? 0) + 1);
+  }
+  const stats = computeStats(answers);
   const platforms = Array.from(new Set(run.rawResponses.map((r) => r.platform)));
   const duration = fmtDuration(run.startedAt, run.completedAt);
 
@@ -210,7 +219,9 @@ export default async function RunPage({
               <StatCard
                 label="Visibility Score"
                 value={fmtPct(stats.visibilityScore)}
-                sub={`${stats.mentionedCount} of ${stats.total} checks`}
+                sub={`${stats.mentionedCount} of ${stats.total} answers${
+                  failedCalls ? ` (${failedCalls} failed call${failedCalls === 1 ? "" : "s"} not counted)` : ""
+                }`}
               />
               <StatCard label="Detection Rate" value={fmtPct(stats.detectionRate)} sub="prompts with ≥1 mention" />
               <StatCard label="Top-3 Rate" value={fmtPct(stats.top3Rate)} sub="of mentions" />
@@ -233,8 +244,10 @@ export default async function RunPage({
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                     {platforms.map((platform) => {
-                      const b = stats.byPlatform.get(platform)!;
-                      const avgRank = b.ranks.length
+                      // Undefined when every call to this platform failed.
+                      const b = stats.byPlatform.get(platform);
+                      const failed = failedByPlatform.get(platform) ?? 0;
+                      const avgRank = b?.ranks.length
                         ? (b.ranks.reduce((a, c) => a + c, 0) / b.ranks.length).toFixed(1)
                         : "—";
                       return (
@@ -243,9 +256,14 @@ export default async function RunPage({
                             {PLATFORM_LABEL[platform] ?? platform}
                           </td>
                           <td className="px-4 py-2 tabular-nums">
-                            {b.mentioned} / {b.total}
+                            {b ? `${b.mentioned} / ${b.total}` : "No answers"}
+                            {failed > 0 && (
+                              <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-500">
+                                {failed} failed call{failed === 1 ? "" : "s"}
+                              </span>
+                            )}
                           </td>
-                          <td className="px-4 py-2 tabular-nums">{fmtPct((b.mentioned / b.total) * 100)}</td>
+                          <td className="px-4 py-2 tabular-nums">{b ? fmtPct((b.mentioned / b.total) * 100) : "—"}</td>
                           <td className="px-4 py-2 tabular-nums">{avgRank}</td>
                         </tr>
                       );

@@ -21,6 +21,11 @@ async function getClient(id: string) {
         include: {
           promptSet: true,
           rawResponses: {
+            // Empty text = a failed call (e.g. Gemini's quota errors before
+            // 2026-11-12), not an answer that left the client out -- counting
+            // it would drag every visibility % down. Same rule as the
+            // Citations page and the monthly report.
+            where: { responseText: { not: "" } },
             include: {
               prompt: true,
               parsedResult: { include: { mentions: { include: { brand: true } } } },
@@ -66,12 +71,9 @@ interface PlatformRankCell {
 // "periodEmpty": a Compare To period is picked but has no crawls in it.
 type PromptChangeMode = "firstLatest" | "period" | "periodEmpty";
 
+// Failed calls (blank answers) are excluded in getClient's query, so every
+// response here is a real answer and only those count as a crawl.
 const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-// A blank responseText is a failed call (e.g. Gemini's quota errors before
-// 2026-11-12), not an answer that left the client out, so it never counts
-// as a crawl for first-vs-latest Change.
-const answered = (r: RawResponseData) => r.responseText.trim().length > 0;
 
 interface PromptRankRow {
   key: string;
@@ -179,19 +181,17 @@ function buildPromptRankings(
           if (rank <= 3) a.top3Count += 1;
         }
       }
-      if (answered(r)) {
-        const point: CrawlPoint = {
-          runId: run.id,
-          date: run.startedAt,
-          rank: mentioned ? (r.parsedResult?.clientBrandRank ?? null) : null,
-        };
-        if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
-        if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
-        const v = a.byRun.get(run.id) ?? { date: run.startedAt, checks: 0, mentioned: 0 };
-        v.checks += 1;
-        if (mentioned) v.mentioned += 1;
-        a.byRun.set(run.id, v);
-      }
+      const point: CrawlPoint = {
+        runId: run.id,
+        date: run.startedAt,
+        rank: mentioned ? (r.parsedResult?.clientBrandRank ?? null) : null,
+      };
+      if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
+      if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
+      const v = a.byRun.get(run.id) ?? { date: run.startedAt, checks: 0, mentioned: 0 };
+      v.checks += 1;
+      if (mentioned) v.mentioned += 1;
+      a.byRun.set(run.id, v);
       for (const m of r.parsedResult?.mentions ?? []) {
         a.totalMentionRows += 1;
         if (m.brand?.isClientBrand) a.clientMentionRows += 1;
@@ -425,7 +425,7 @@ function buildDashboardData(
       ? "period"
       : "periodEmpty";
   const promptRankings = buildPromptRankings(primaryRuns, comparisonRuns, promptChangeMode, platformsAvailable);
-  const answeredRuns = primaryRuns.filter((run) => run.rawResponses.some(answered));
+  const answeredRuns = primaryRuns.filter((run) => run.rawResponses.length > 0);
   const crawlSpan =
     answeredRuns.length >= 2
       ? { first: crawlDay(answeredRuns[0].startedAt), latest: crawlDay(answeredRuns[answeredRuns.length - 1].startedAt) }
