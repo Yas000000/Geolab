@@ -4,7 +4,14 @@ import { prisma } from "@/lib/prisma";
 import { ModelFilter } from "@/components/model-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
+import {
+  CompetitorRankChart,
+  type RankCrawl,
+  type RankPoint,
+  type RankSeries,
+} from "@/components/competitor-rank-chart";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
+import { isLiveSearchModel } from "@/lib/citations";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +77,9 @@ interface PlatformRankCell {
 // each prompt's most recent crawl vs. its first crawl in the date range.
 // "periodEmpty": a Compare To period is picked but has no crawls in it.
 type PromptChangeMode = "firstLatest" | "period" | "periodEmpty";
+
+// Brands shown in the Competitors section's rank-by-crawl chart.
+const RANK_CHART_BRANDS = 5;
 
 // Failed calls (blank answers) are excluded in getClient's query, so every
 // response here is a real answer and only those count as a crawl.
@@ -415,6 +425,40 @@ function buildDashboardData(
     })
     .sort((a, b) => b.appearances - a.appearances);
 
+  // Competitor rank by crawl (the bump chart above the Competitors table):
+  // each brand's rank within each crawl alone, by mentions -- same brand keys
+  // and Models filter as the table. Ties share a rank (1, 1, 3). Shows the
+  // table's top brands for this range, plus the client if it isn't among them.
+  const rankKeys = brandTable.slice(0, RANK_CHART_BRANDS).map((b) => b.key);
+  const clientRow = brandTable.find((b) => b.isClientBrand);
+  if (clientRow && !rankKeys.includes(clientRow.key)) rankKeys.push(clientRow.key);
+  const rankCrawls: RankCrawl[] = [];
+  const rankPoints = new Map<string, (RankPoint | null)[]>(rankKeys.map((k) => [k, []]));
+  for (const run of primaryRuns) {
+    const counts = new Map<string, number>();
+    for (const r of run.rawResponses.filter(matchesPlatform)) {
+      for (const m of r.parsedResult?.mentions ?? []) {
+        const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    if (counts.size === 0) continue; // no answers (or no brands) for this filter in this crawl
+    const sortedCounts = Array.from(counts.values()).sort((a, b) => b - a);
+    rankCrawls.push({
+      runId: run.id,
+      dateLabel: crawlDay(run.startedAt),
+      isTraining: !run.rawResponses.some((r) => isLiveSearchModel(r.modelId)),
+    });
+    for (const key of rankKeys) {
+      const n = counts.get(key);
+      rankPoints.get(key)!.push(n ? { rank: sortedCounts.indexOf(n) + 1, mentions: n } : null);
+    }
+  }
+  const rankSeries: RankSeries[] = rankKeys.map((key) => {
+    const row = brandTable.find((b) => b.key === key)!;
+    return { key, name: row.name, isClientBrand: row.isClientBrand, points: rankPoints.get(key)! };
+  });
+
   // Prompt Rankings ignores the Models filter, so whether its comparison
   // period has data is checked on the unfiltered runs (hasComparison above
   // uses the filtered count, which would blank this table's Change for every
@@ -442,6 +486,8 @@ function buildDashboardData(
     promptRankings,
     promptChangeMode,
     crawlSpan,
+    rankCrawls,
+    rankSeries,
     benchmarksInRange,
     allTimeRange,
   };
@@ -487,6 +533,8 @@ export default async function ClientRankingsPage({
     promptRankings,
     promptChangeMode,
     crawlSpan,
+    rankCrawls,
+    rankSeries,
     benchmarksInRange,
     allTimeRange,
   } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
@@ -684,6 +732,16 @@ export default async function ClientRankingsPage({
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Competitors
         </h2>
+        {brandTable.length > 0 && rankCrawls.length > 0 && (
+          <>
+            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Each brand&apos;s rank in each crawl by number of mentions, #1 at the top. Shows this range&apos;s top{" "}
+              {RANK_CHART_BRANDS} brands, plus you if you&apos;re outside them. The table below ranks across the whole
+              range, so its order can differ from any single crawl. Hover the chart for each crawl&apos;s ranks.
+            </p>
+            <CompetitorRankChart crawls={rankCrawls} series={rankSeries} />
+          </>
+        )}
         {brandTable.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
             No completed runs in this range{platformFilter ? " for this platform" : ""}.
