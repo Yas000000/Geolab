@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from python_pipeline.geo_prompt_engine import CATEGORY_LABELS, GeoPromptEngine
 from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE, PlatformResult
-from python_pipeline.parser import analyze, normalize_text
+from python_pipeline.parser import analyze, named_outside_links, normalize_text
 from python_pipeline.brand_extractor import extract_brands
 
 app = FastAPI()
@@ -238,7 +238,13 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     extracted = await extract_brands(raw_responses_by_platform)
     for r in results:
         key = (r["platform"], r["promptText"])
-        r["parsed"]["extractedBrands"] = extracted.get(key, [])
+        # The extractor reads ChatGPT's inline links too, so it returns e.g.
+        # "Yellowbrick" for an answer that only linked yellowbrickprogram.com
+        # (5 stored Yellowbrick rows, 2026-11-13). Same rule as analyze():
+        # a brand only in a URL/domain wasn't named.
+        r["parsed"]["extractedBrands"] = [
+            name for name in extracted.get(key, []) if named_outside_links(r["responseText"], name)
+        ]
 
     return {
         "promptGroups": prompt_groups_out,

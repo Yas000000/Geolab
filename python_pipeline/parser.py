@@ -2,8 +2,9 @@
 Parses an AI response to detect brand mentions, rank position, and sentiment.
 Ported verbatim from geo-rank-checker/parser.py -- pure regex/string logic,
 no I/O, no reason to change behavior during the port. Last synced 2026-11-06
-(through geo-rank-checker fc1d911), plus one portal-only fix: curly quotes are
-folded too (see _UNICODE_FOLD).
+(through geo-rank-checker fc1d911), plus portal-only fixes: curly quotes are
+folded too (see _UNICODE_FOLD), and names inside URLs/domains don't count as
+mentions (see _LINK_OR_DOMAIN).
 """
 
 import re
@@ -37,6 +38,57 @@ def normalize_text(text: str) -> str:
     return text.translate(_UNICODE_FOLD) if text else text
 
 
+# URLs and bare domains. ChatGPT's Live Search puts inline links inside the
+# answer ("([yellowbrickprogram.com](https://yellowbrickprogram.com/...))"),
+# and a plain substring search counted those as the client being named: 17 of
+# 138 stored Yellowbrick mentions (all ChatGPT Live Search) were answers that
+# only linked the client's site and never named it, all scored rank #1
+# (portal, found 2026-11-13). Names are only looked for in a copy of the
+# answer with these blanked out. The domain part needs a lowercase TLD so a
+# missing space after a period ("...at Yellowbrick.Their team") isn't
+# mistaken for a domain. Same pattern as src/lib/mention-backing.ts.
+_LINK_OR_DOMAIN = re.compile(r'\bhttps?://[^\s)\]]+|\b(?:[A-Za-z0-9-]+\.)+[a-z]{2,}\b(?:/[^\s)\]]*)?')
+
+
+def mask_links(text: str, keep=()) -> str:
+    """`text` with every URL and bare domain replaced by spaces of the same
+    length, so offsets into it are offsets into `text`. A bare domain that is
+    exactly one of the names in `keep` stays: some brands are named like a
+    domain ("Clutch.co", "G2.com") and are mentioned that way in prose."""
+    if not text:
+        return text
+    keep = {k.strip().lower() for k in keep if k and k.strip()}
+
+    def blank(m: re.Match) -> str:
+        s = m.group(0)
+        if not s.lower().startswith(('http://', 'https://')) and s.lower() in keep:
+            return s
+        return ' ' * len(s)
+
+    return _LINK_OR_DOMAIN.sub(blank, text)
+
+
+def named_outside_links(text: str, name: str) -> bool:
+    """False only when `name` shows up in the answer solely inside URLs or
+    domains (e.g. "Yellowbrick" in "yellowbrickprogram.com"), i.e. the answer
+    linked the brand's site without naming it. True when it is named in the
+    text, and also when it doesn't appear literally at all (the brand
+    extractor sometimes returns a tidied-up name), since that can't be told
+    apart from a real mention. Used to drop the brand extractor's link-only
+    names before they become Mention rows."""
+    if not text or not name or not name.strip():
+        return True
+    t = normalize_text(text)
+    n = normalize_text(name).strip()
+    # "Yellowbrick Program" also appears inside "yellowbrickprogram.com".
+    compact = re.sub(r"[\s'&.-]+", '', n)
+    variants = [re.compile(re.escape(v), re.IGNORECASE) for v in dict.fromkeys([n, compact]) if v]
+    masked = mask_links(t, keep=[n])
+    if any(p.search(masked) for p in variants):
+        return True
+    return not any(p.search(t) for p in variants)
+
+
 def analyze(response: str, brand: str, competitors: list = None, aliases: list = None) -> MentionResult:
     """
     `aliases`: other exact names the client may be mentioned under (e.g. a formal legal
@@ -52,21 +104,28 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
     response = normalize_text(response)
     competitors = [normalize_text(c) for c in (competitors or [])]
     match_names = [normalize_text(n) for n in [brand] + list(aliases or [])]
+    # Names are looked for only outside URLs/domains (see _LINK_OR_DOMAIN);
+    # `named` is the answer with those blanked, same length as `response`, and
+    # `named_items` the same list items with theirs blanked (same keys).
+    # Labels and excerpts still come from the real text.
+    keep = match_names + competitors
+    named = mask_links(response, keep)
     numbered_items = _extract_numbered_items(response)
-    competitor_entries = _find_brands_in_response(response, competitors, numbered_items)
+    named_items = {k: mask_links(v, keep) for k, v in numbered_items.items()}
+    competitor_entries = _find_brands_in_response(named, competitors, named_items)
     top_items = _extract_top_items(numbered_items, n=5)
 
     client_pos = None
     for name in match_names:
-        m = re.search(re.escape(name), response, re.IGNORECASE)
+        m = re.search(re.escape(name), named, re.IGNORECASE)
         if m and (client_pos is None or m.start() < client_pos):
             client_pos = m.start()
     if client_pos is None:
         return MentionResult(False, None, "n/a", "", competitor_entries, top_items)
 
-    rank = _find_brand_rank_multi(numbered_items, match_names)
+    rank = _find_brand_rank_multi(named_items, match_names)
     if rank is None:
-        rank = _find_position_rank_multi(response, match_names, competitors)
+        rank = _find_position_rank_multi(named, match_names, competitors)
 
     brands_in_response = sorted(
         competitor_entries + [(brand, rank)],
@@ -77,7 +136,7 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
     # numbered list), inject it at the position matching where it first appears in text.
     brand_in_top = any(
         any(re.search(re.escape(name), label, re.IGNORECASE) for name in match_names)
-        for _, label in top_items
+        for _, label in _extract_top_items(named_items, n=5)
     )
     if not brand_in_top:
         insert_at = len(top_items)  # default: append
@@ -92,8 +151,10 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
         top_items.insert(insert_at, (rank, brand))
         top_items = top_items[:5]
 
-    excerpt = _extract_excerpt_multi(response, match_names)
-    sentiment = _detect_sentiment(excerpt)
+    excerpt, named_excerpt = _extract_excerpt_multi(response, named, match_names)
+    # Tone from the words of the answer, not its link slugs
+    # (".../best-psychiatric-treatment-centers" read as "best").
+    sentiment = _detect_sentiment(named_excerpt)
 
     return MentionResult(True, rank, sentiment, excerpt, brands_in_response, top_items)
 
@@ -188,15 +249,24 @@ def _find_position_rank_multi(text: str, match_names: list, competitors: list) -
     return sorted_keys.index("__client__") + 1
 
 
-def _extract_excerpt_multi(response: str, match_names: list) -> str:
-    """Same as _extract_excerpt, but matches on any of the client's names."""
+def _extract_excerpt_multi(response: str, named: str, match_names: list) -> tuple[str, str]:
+    """Same as _extract_excerpt, but matches on any of the client's names, and
+    only where `named` (the answer with URLs/domains blanked, same length) still
+    has one. Returns (excerpt from the real text, same excerpt from `named`).
+    Sentences are cut from `response` and reused by offset in `named`, so the
+    blanking can't move a sentence boundary."""
     patterns = [re.compile(re.escape(name), re.IGNORECASE) for name in match_names]
-    sentences = re.split(r'(?<=[.!?])\s+', response)
-    for i, sentence in enumerate(sentences):
-        if any(p.search(sentence) for p in patterns):
-            window = sentences[i:i + 2]
-            return ' '.join(s.strip() for s in window if s.strip())
-    return ""
+    spans, start = [], 0
+    for m in re.finditer(r'(?<=[.!?])\s+', response):
+        spans.append((start, m.start()))
+        start = m.end()
+    spans.append((start, len(response)))
+    for i, (s, e) in enumerate(spans):
+        if any(p.search(named[s:e]) for p in patterns):
+            window = spans[i:i + 2]
+            return (' '.join(response[a:b].strip() for a, b in window if response[a:b].strip()),
+                    ' '.join(named[a:b].strip() for a, b in window if named[a:b].strip()))
+    return "", ""
 
 
 def _find_brands_in_response(text: str, brands: list, numbered_items: dict) -> list:
