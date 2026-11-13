@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { Platform, RunStatus } from "@/generated/prisma/client";
 import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-platform-map";
 import { resolveBrandNames } from "@/lib/brand-resolution";
+import { isOwnSite, siteDomain } from "@/lib/citations";
 import { Agent, fetch as undiciFetch } from "undici";
 
 // The Python pipeline replies only once the whole run is done, so no
@@ -153,6 +154,18 @@ export async function callPipelineAndPersist(params: {
     const brandIdByName = await resolveBrandNames(clientId, Array.from(uniqueExtractedNames), brandId);
     brandIdByName.set(brandName.toLowerCase(), brandId);
 
+    // A page of the client's own site cited as a source is a mention too,
+    // even when the answer's text never names them (user's rule, 2026-11-12:
+    // the client's domain counts as a mention however it's referenced).
+    // Claude, Gemini and Perplexity list sources outside the answer text, so
+    // the parser can't see these. Such a mention has no rank (it has no place
+    // in the text) and a neutral tone.
+    const ownDomain = siteDomain(
+      (await prisma.client.findUnique({ where: { id: clientId }, select: { domain: true } }))?.domain,
+    );
+    const sourceOnly = (r: PipelineResultCell) =>
+      !r.parsed.mentioned && (r.citations ?? []).some((c) => isOwnSite(c.domain, ownDomain));
+
     const writeOps = pipeline.results.map((r) =>
       prisma.rawResponse.create({
         data: {
@@ -172,9 +185,9 @@ export async function callPipelineAndPersist(params: {
           },
           parsedResult: {
             create: {
-              clientBrandMentioned: r.parsed.mentioned,
+              clientBrandMentioned: r.parsed.mentioned || sourceOnly(r),
               clientBrandRank: r.parsed.rank,
-              sentiment: mapSentiment(r.parsed.sentiment),
+              sentiment: sourceOnly(r) ? "NEUTRAL" : mapSentiment(r.parsed.sentiment),
               excerpt: r.parsed.excerpt || null,
               mentions: {
                 create: r.parsed.extractedBrands.map((name, i) => ({
