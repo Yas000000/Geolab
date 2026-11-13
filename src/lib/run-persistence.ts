@@ -158,8 +158,8 @@ export async function callPipelineAndPersist(params: {
     // even when the answer's text never names them (user's rule, 2026-11-12:
     // the client's domain counts as a mention however it's referenced).
     // Claude, Gemini and Perplexity list sources outside the answer text, so
-    // the parser can't see these. Such a mention has no rank (it has no place
-    // in the text) and a neutral tone.
+    // the parser can't see these. Such a mention ranks #1, the same as a name
+    // outside the AI's list (user's rule, 2026-11-13), with a neutral tone.
     const ownDomain = siteDomain(
       (await prisma.client.findUnique({ where: { id: clientId }, select: { domain: true } }))?.domain,
     );
@@ -186,7 +186,7 @@ export async function callPipelineAndPersist(params: {
           parsedResult: {
             create: {
               clientBrandMentioned: r.parsed.mentioned || sourceOnly(r),
-              clientBrandRank: r.parsed.rank,
+              clientBrandRank: sourceOnly(r) ? 1 : r.parsed.rank,
               sentiment: sourceOnly(r) ? "NEUTRAL" : mapSentiment(r.parsed.sentiment),
               excerpt: r.parsed.excerpt || null,
               mentions: {

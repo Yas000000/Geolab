@@ -64,11 +64,7 @@ interface BrandRow {
 
 interface PlatformRankCell {
   avgRank: number | null;
-  movement: number | null; // + = improved (moved up), - = dropped. null when there's nothing to compare or no rank on one side.
-  // First-vs-latest mode only: ranked in the latest crawl but not the first
-  // ("new"), or the reverse ("lost"). A numeric movement needs a rank on both
-  // sides, and most first crawls didn't rank the client at all.
-  status: "new" | "lost" | null;
+  movement: number | null; // + = improved (moved up), - = dropped. null when there's nothing to compare.
   changeTitle: string | null; // hover text spelling out what the Change cell compares
   checks: number;
 }
@@ -91,6 +87,15 @@ const PROMPT_COL =
 // Failed calls (blank answers) are excluded in getClient's query, so every
 // response here is a real answer and only those count as a crawl.
 const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+// Other brands an answer names: its extracted Mention rows, minus the client's own.
+function brandsNamed(r: RawResponseData): number {
+  const keys = new Set<string>();
+  for (const m of r.parsedResult?.mentions ?? []) {
+    if (!m.brand?.isClientBrand) keys.add(m.brandId ?? m.rawLabel.trim().toLowerCase());
+  }
+  return keys.size;
+}
 
 interface PromptRankRow {
   key: string;
@@ -132,7 +137,8 @@ function buildPromptRankings(
   interface CrawlPoint {
     runId: string;
     date: Date;
-    rank: number | null; // null = answered but didn't rank the client
+    rank: number | null; // null = the client isn't in this answer
+    brandsNamed: number; // other brands this answer names
   }
   interface PlatformAcc {
     primaryRanks: number[];
@@ -201,7 +207,11 @@ function buildPromptRankings(
       const point: CrawlPoint = {
         runId: run.id,
         date: run.startedAt,
-        rank: mentioned ? (r.parsedResult?.clientBrandRank ?? null) : null,
+        // Every mention has a rank: outside the AI's list it's #1 (parser
+        // rule), and an answer that only cites the client's site is stored as
+        // #1 too (run-persistence.ts).
+        rank: mentioned ? (r.parsedResult?.clientBrandRank ?? 1) : null,
+        brandsNamed: brandsNamed(r),
       };
       if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
       if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
@@ -236,19 +246,32 @@ function buildPromptRankings(
 
   const avg = (arr: number[]) => (arr.length ? arr.reduce((a, c) => a + c, 0) / arr.length : null);
 
-  function firstLatestRankChange(p: PlatformAcc | undefined): Pick<PlatformRankCell, "movement" | "status" | "changeTitle"> {
+  // Change is always a number (user's rules, 2026-11-13): an answer the
+  // client isn't in counts as one place below the last brand it names, but
+  // never better than one place below the client's rank in the other crawl,
+  // so dropping out always reads as a drop and appearing as a gain. Without
+  // that floor, an answer naming no brands would count a missing client as #1.
+  // Missing from both answers: nothing moved, so no number.
+  function firstLatestRankChange(p: PlatformAcc | undefined): Pick<PlatformRankCell, "movement" | "changeTitle"> {
     const f = p?.first;
     const l = p?.latest;
-    if (!f || !l) return { movement: null, status: null, changeTitle: null };
+    if (!f || !l) return { movement: null, changeTitle: null };
     if (f.runId === l.runId) {
-      return { movement: null, status: null, changeTitle: `Only one crawl with an answer so far (${crawlDay(l.date)})` };
+      return { movement: null, changeTitle: `Only one crawl with an answer so far (${crawlDay(l.date)})` };
     }
-    const describe = (pt: CrawlPoint) => (pt.rank != null ? `#${pt.rank}` : "not ranked");
-    const changeTitle = `${describe(f)} on ${crawlDay(f.date)} → ${describe(l)} on ${crawlDay(l.date)}`;
-    if (f.rank != null && l.rank != null) return { movement: f.rank - l.rank, status: null, changeTitle };
-    if (f.rank == null && l.rank != null) return { movement: null, status: "new", changeTitle };
-    if (f.rank != null && l.rank == null) return { movement: null, status: "lost", changeTitle };
-    return { movement: null, status: null, changeTitle };
+    if (f.rank == null && l.rank == null) {
+      return { movement: null, changeTitle: `Not in the answer on ${crawlDay(f.date)} or ${crawlDay(l.date)}` };
+    }
+    const counted = (pt: CrawlPoint, other: CrawlPoint) =>
+      pt.rank ?? Math.max(pt.brandsNamed + 1, (other.rank ?? 0) + 1);
+    const describe = (pt: CrawlPoint, other: CrawlPoint) =>
+      pt.rank != null
+        ? `#${pt.rank}`
+        : `not in the answer (it names ${pt.brandsNamed} other ${pt.brandsNamed === 1 ? "brand" : "brands"}), counted as #${counted(pt, other)}`;
+    return {
+      movement: counted(f, l) - counted(l, f),
+      changeTitle: `${describe(f, l)} on ${crawlDay(f.date)} → ${describe(l, f)} on ${crawlDay(l.date)}`,
+    };
   }
 
   return Array.from(acc.entries())
@@ -257,11 +280,7 @@ function buildPromptRankings(
       for (const platform of platforms) {
         const p = a.byPlatform.get(platform);
         const avgRank = p ? avg(p.primaryRanks) : null;
-        let change: Pick<PlatformRankCell, "movement" | "status" | "changeTitle"> = {
-          movement: null,
-          status: null,
-          changeTitle: null,
-        };
+        let change: Pick<PlatformRankCell, "movement" | "changeTitle"> = { movement: null, changeTitle: null };
         if (mode === "firstLatest") {
           change = firstLatestRankChange(p);
         } else if (hasComparison) {
@@ -620,13 +639,14 @@ export default async function ClientRankingsPage({
           Prompt Rankings
         </h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-          Shown per platform regardless of the Models filter above.
+          Shown per platform regardless of the Models filter above. An answer that cites your site without naming you
+          counts as #1, the same as a mention outside the AI&apos;s list.
           {promptChangeMode === "period"
             ? " Change is vs. the comparison period selected in the date picker."
             : promptChangeMode === "periodEmpty"
               ? " No crawls fall in the selected Compare To period, so Change is blank."
               : crawlSpan
-                ? ` Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). New means ranked now but not in the first crawl, Lost means the reverse. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`
+                ? ` Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`
                 : " Change needs at least two crawls in this range. Pick a \"Compare To\" period in the date picker to compare periods instead."}
         </p>
         {promptRankings.length === 0 ? (
@@ -690,11 +710,7 @@ export default async function ClientRankingsPage({
                                   {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums" title={cell?.changeTitle ?? undefined}>
-                                  {cell?.status === "new" ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400">New</span>
-                                  ) : cell?.status === "lost" ? (
-                                    <span className="text-red-600 dark:text-red-400">Lost</span>
-                                  ) : cell?.movement == null ? (
+                                  {cell?.movement == null ? (
                                     <span className="text-zinc-300 dark:text-zinc-700">—</span>
                                   ) : (
                                     <span
