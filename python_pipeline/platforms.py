@@ -26,8 +26,10 @@ class PlatformResult:
     response: str
     error: str | None = None
     # Live Search only: the pages the answer cited, in first-cited order,
-    # de-duplicated by URL -- [{"url", "title", "domain"}]. Always empty for
-    # Training Search (no web access, nothing to cite).
+    # de-duplicated by URL -- [{"url", "title", "domain", "spans"?}]. Always
+    # empty for Training Search (no web access, nothing to cite). "spans" is
+    # the parts of `response` that page backs (see _attach_spans); absent
+    # when the platform gives none (Perplexity) or none could be placed.
     citations: list = field(default_factory=list)
 
 
@@ -60,6 +62,37 @@ def _dedupe_citations(pairs: list[tuple[str, str]], domain_hints: dict[str, str]
             domain = domain_hints[url]
         out.append({"url": url, "title": (title or "").strip() or None, "domain": domain})
     return out
+
+
+def _attach_spans(citations: list[dict], text: str, raw_spans: list[tuple[str, int, int]]) -> list[dict]:
+    """Adds "spans": [[start, end], ...] to each citation: the stretches of
+    the answer that page backs, from the platform's own per-claim citation
+    data. raw_spans are (url, start, end) as Python character offsets into
+    `text`; they're stored as UTF-16 offsets, which is how JavaScript indexes
+    the same string, so the portal can slice responseText with them directly
+    (the two differ only after a character outside the BMP, e.g. an emoji).
+    What a span covers differs by platform: Claude and Gemini mark the cited
+    claim itself, ChatGPT marks the inline "([site](url))" link it places
+    inside the sentence, just before the period."""
+    by_url = {c["url"]: c for c in citations}
+    found: dict[str, set] = {}
+    for url, start, end in raw_spans:
+        cite = by_url.get(_clean_url(url)) if url else None
+        start, end = max(0, start), min(len(text), end)
+        if cite is not None and start < end:
+            found.setdefault(cite["url"], set()).add((start, end))
+    if not found:
+        return citations
+    simple = all(ord(ch) <= 0xFFFF for ch in text)
+
+    def utf16(i: int) -> int:
+        return i if simple else len(text[:i].encode("utf-16-le")) // 2
+
+    for cite in citations:
+        spans = sorted(found.get(cite["url"], ()))
+        if spans:
+            cite["spans"] = [[utf16(s), utf16(e)] for s, e in spans]
+    return citations
 
 
 _SYSTEM_PROMPT = (
@@ -168,16 +201,27 @@ async def query_openai_live(prompt: str) -> PlatformResult:
         )
         # Cited pages are url_citation annotations on the message's text
         # (confirmed live 2026-11-06; same shape geo-citation-checker uses).
-        pairs = []
+        # Each annotation's start/end_index are character offsets into its
+        # own output_text block (verified live 2026-11-12: every one sliced
+        # exactly to its "([site](url))" link), so blocks are offset by the
+        # text before them -- output_text is the blocks joined with "".
+        pairs, raw_spans, joined = [], [], ""
         for item in resp.output:
             if item.type != "message":
                 continue
             for block in item.content:
+                base = len(joined)
+                joined += getattr(block, "text", "") if getattr(block, "type", None) == "output_text" else ""
                 for ann in getattr(block, "annotations", None) or []:
                     if getattr(ann, "type", None) == "url_citation":
                         pairs.append((ann.url, getattr(ann, "title", "")))
-        return PlatformResult("ChatGPT (GPT-4o, live search)", resp.output_text or "",
-                              citations=_dedupe_citations(pairs))
+                        if ann.start_index is not None and ann.end_index is not None:
+                            raw_spans.append((ann.url, base + ann.start_index, base + ann.end_index))
+        text = resp.output_text or ""
+        citations = _dedupe_citations(pairs)
+        if joined == text:  # never place spans on text they weren't measured against
+            _attach_spans(citations, text, raw_spans)
+        return PlatformResult("ChatGPT (GPT-4o, live search)", text, citations=citations)
     except Exception as e:
         return PlatformResult("ChatGPT (GPT-4o, live search)", "", error=str(e))
 
@@ -201,15 +245,23 @@ async def query_claude_live(prompt: str) -> PlatformResult:
             # per-claim citations. Citations are what the Citations page reports.
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
         )
-        text = "".join(block.text for block in resp.content if block.type == "text")
-        pairs = []
+        # Claude splits its answer into text blocks and attaches citations to
+        # the block holding the cited claim, so each citation's span is its
+        # block's place in the joined text.
+        parts, pairs, raw_spans, offset = [], [], [], 0
         for block in resp.content:
             if block.type != "text":
                 continue
+            start = offset
+            offset += len(block.text)
+            parts.append(block.text)
             for cite in getattr(block, "citations", None) or []:
                 if getattr(cite, "type", None) == "web_search_result_location":
                     pairs.append((cite.url, getattr(cite, "title", "")))
-        return PlatformResult("Claude (Sonnet 4.6, live search)", text, citations=_dedupe_citations(pairs))
+                    raw_spans.append((cite.url, start, offset))
+        text = "".join(parts)
+        citations = _attach_spans(_dedupe_citations(pairs), text, raw_spans)
+        return PlatformResult("Claude (Sonnet 4.6, live search)", text, citations=citations)
     except Exception as e:
         return PlatformResult("Claude (Sonnet 4.6, live search)", "", error=str(e))
 
@@ -229,7 +281,7 @@ async def query_gemini_live(prompt: str) -> PlatformResult:
                 ),
             )
             citations = await _gemini_citations(resp)
-            return PlatformResult("Gemini (Flash Lite, live search)", resp.text, citations=citations)
+            return PlatformResult("Gemini (Flash Lite, live search)", resp.text or "", citations=citations)
         except Exception as e:
             last_err = str(e)
             if "503" in last_err or "UNAVAILABLE" in last_err:
@@ -254,9 +306,11 @@ async def _gemini_citations(resp) -> list[dict]:
     meta = getattr(candidate, "grounding_metadata", None) if candidate else None
     chunks = getattr(meta, "grounding_chunks", None) or []
     raw = []
+    chunk_raw: list[int | None] = []  # chunk index -> index in raw (None: no web uri)
     for chunk in chunks:
         web = getattr(chunk, "web", None)
         uri = getattr(web, "uri", None) if web else None
+        chunk_raw.append(len(raw) if uri else None)
         if uri:
             hint = getattr(web, "domain", None) or getattr(web, "title", None) or ""
             raw.append((uri, getattr(web, "title", "") or "", hint.strip().lower().removeprefix("www.")))
@@ -281,7 +335,45 @@ async def _gemini_citations(resp) -> list[dict]:
         pairs.append((real, title))
         if real == uri and hint:  # unresolved redirect: count it under the site Gemini named
             hints[_clean_url(real)] = hint
-    return _dedupe_citations(pairs, hints)
+    citations = _dedupe_citations(pairs, hints)
+    chunk_urls = [resolved[i] if i is not None else None for i in chunk_raw]
+    return _attach_spans(citations, resp.text or "", _gemini_spans(candidate, meta, resp.text or "", chunk_urls))
+
+
+def _gemini_spans(candidate, meta, text: str, chunk_urls: list[str | None]) -> list[tuple[str, int, int]]:
+    """(url, start, end) character offsets from Gemini's grounding_supports:
+    each support is a segment of the answer plus the chunks backing it.
+    Segment offsets are UTF-8 BYTES within one text part, not characters
+    (verified live 2026-11-12: all 12 supports matched their segment.text
+    only when read as bytes; read as characters every one after the first
+    accented letter or curly quote would drift). Each segment is checked
+    against the text Gemini says it covers; one that doesn't match is
+    located by that text instead, or dropped."""
+    parts = [p.text for p in (getattr(getattr(candidate, "content", None), "parts", None) or [])
+             if getattr(p, "text", None) is not None and not getattr(p, "thought", False)]
+    if "".join(parts) != text:  # resp.text is these parts joined; anything else, don't guess
+        return []
+    bases = [sum(len(p) for p in parts[:i]) for i in range(len(parts))]
+    out = []
+    for support in getattr(meta, "grounding_supports", None) or []:
+        seg = getattr(support, "segment", None)
+        if seg is None or seg.end_index is None:
+            continue
+        part = getattr(seg, "part_index", None) or 0
+        if part >= len(parts):
+            continue
+        encoded = parts[part].encode("utf-8")
+        start = bases[part] + len(encoded[:seg.start_index or 0].decode("utf-8", errors="ignore"))
+        end = bases[part] + len(encoded[:seg.end_index].decode("utf-8", errors="ignore"))
+        if seg.text and text[start:end] != seg.text:
+            found = text.find(seg.text)
+            if found < 0:
+                continue
+            start, end = found, found + len(seg.text)
+        for idx in getattr(support, "grounding_chunk_indices", None) or []:
+            if 0 <= idx < len(chunk_urls) and chunk_urls[idx]:
+                out.append((chunk_urls[idx], start, end))
+    return out
 
 
 # --- Perplexity, Live Search only. Perplexity always searches the web before

@@ -337,6 +337,13 @@ model Citation {
   url           String      @db.Text
   title         String?     @db.Text
   domain        String
+  // The parts of the answer this page backs, as [[start, end], ...] offsets
+  // into RawResponse.responseText in UTF-16 code units (JavaScript string
+  // indexes), sorted. From the platform's own per-claim citation data:
+  // Claude and Gemini mark the cited claim, ChatGPT marks the inline link it
+  // puts inside the sentence. Null for Perplexity (it gives none) and for
+  // runs crawled before 2026-11-12.
+  spans         Json?
 
   @@index([rawResponseId])
   @@index([domain])

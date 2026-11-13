@@ -26,8 +26,9 @@ interface PipelineResultCell {
   modelId: string;
   responseText: string;
   error: string | null;
-  // Live Search only; absent/empty for Training Search.
-  citations?: { url: string; title: string | null; domain: string }[];
+  // Live Search only; absent/empty for Training Search. spans: the parts of
+  // responseText the page backs (see Citation.spans in schema.prisma).
+  citations?: { url: string; title: string | null; domain: string; spans?: [number, number][] }[];
   parsed: {
     mentioned: boolean;
     rank: number | null;
@@ -166,6 +167,7 @@ export async function callPipelineAndPersist(params: {
               url: c.url,
               title: c.title,
               domain: c.domain,
+              ...(c.spans?.length ? { spans: c.spans } : {}),
             })),
           },
           parsedResult: {
