@@ -5,6 +5,7 @@ import { DateRangePicker } from "@/components/date-range-picker";
 import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 import { citationTrackedRuns, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
+import { summarizeMentionBacking, type BackingCounts } from "@/lib/mention-backing";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       benchmarkSnapshots: { select: { snapshotDate: true } },
+      brands: { where: { isClientBrand: true }, select: { name: true, aliases: { select: { alias: true } } } },
       runs: {
         where: { status: "COMPLETE" },
         orderBy: { startedAt: "asc" },
@@ -28,9 +30,13 @@ async function getClient(id: string) {
             // Empty text = the call failed (e.g. Gemini's 429 quota errors); not an answer.
             where: { modelId: { contains: LIVE_SEARCH_TAG, mode: "insensitive" }, responseText: { not: "" } },
             select: {
+              id: true,
               platform: true,
               prompt: { select: { text: true, category: true } },
-              citations: { orderBy: { position: "asc" }, select: { url: true, title: true, domain: true } },
+              citations: {
+                orderBy: { position: "asc" },
+                select: { url: true, title: true, domain: true, spans: true },
+              },
             },
           },
         },
@@ -81,6 +87,18 @@ function YouBadge() {
     <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
       You
     </span>
+  );
+}
+
+function BackingCell({ counts, kind }: { counts: BackingCounts; kind: "own" | "thirdParty" | "none" }) {
+  const n = counts[kind];
+  return (
+    <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
+      {n}
+      <span className="ml-1.5 text-xs font-normal text-zinc-400 dark:text-zinc-500">
+        {counts.naming ? `${Math.round((n / counts.naming) * 100)}%` : "–"}
+      </span>
+    </td>
   );
 }
 
@@ -146,6 +164,42 @@ export default async function ClientCitationsPage({
   const promptRows = [...byPrompt.values()]
     .map((answers) => ({ text: answers[0].promptText, summary: summarizeCitations(answers, ownDomain) }))
     .sort((a, b) => b.summary.answersCitingOwnSite - a.summary.answersCitingOwnSite || a.text.localeCompare(b.text));
+
+  // What backs your mentions: only crawls that saved per-claim citation spans
+  // (Live Search since 2026-11-13), and not Perplexity, which gives none.
+  // Answer text is fetched only for answers that could matter -- ones whose
+  // text contains a client name, or that cite the client's site -- so the
+  // page doesn't pull every answer's full text.
+  const brandName = client.brands[0]?.name ?? client.name;
+  const brandNames = client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]);
+  const spanRuns = citationTrackedRuns(client.runs).filter(
+    (run) => inWindow(run.startedAt, dateRange) && run.rawResponses.some((r) => r.citations.some((c) => c.spans != null)),
+  );
+  const backingScope = spanRuns
+    .flatMap((run) => run.rawResponses)
+    .filter((r) => r.platform !== "PERPLEXITY" && (!platformFilter || r.platform === platformFilter));
+  const backingTexts =
+    backingScope.length && brandNames.length
+      ? await prisma.rawResponse.findMany({
+          where: {
+            id: { in: backingScope.map((r) => r.id) },
+            OR: [
+              ...brandNames.map((n) => ({ responseText: { contains: n, mode: "insensitive" as const } })),
+              ...(ownDomain ? [{ citations: { some: { domain: { endsWith: ownDomain } } } }] : []),
+            ],
+          },
+          select: { id: true, responseText: true },
+        })
+      : [];
+  const textById = new Map(backingTexts.map((r) => [r.id, r.responseText]));
+  const backing = summarizeMentionBacking(
+    backingScope.map((r) => ({ platform: r.platform, text: textById.get(r.id) ?? "", citations: r.citations })),
+    brandNames,
+    ownDomain,
+  );
+  const backingPlatforms = Object.keys(backing.byPlatform).sort((a, b) =>
+    (PLATFORM_LABEL[a] ?? a).localeCompare(PLATFORM_LABEL[b] ?? b),
+  );
 
   const ownSiteDelta = comparison ? summary.ownSitePct - comparison.ownSitePct : null;
   const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
@@ -302,6 +356,149 @@ export default async function ClientCitationsPage({
                   </tbody>
                 </table>
               </div>
+            )}
+          </section>
+
+          <section className="mb-8">
+            <h2 className={sectionTitle}>What Backs Your Mentions</h2>
+            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              When an answer names {brandName}, the page the AI linked to that part of the answer: your own site, a
+              third-party page, or nothing. Your Site counts answers where at least one of your pages is linked there,
+              even alongside others. ChatGPT, Claude and Gemini only: Perplexity doesn&apos;t say which source backs
+              which part of its answer.
+              {spanRuns.length > 0 &&
+                ` Based on ${spanRuns.length} Live Search crawl${spanRuns.length === 1 ? "" : "s"} in this range; crawls from before mid-November 2026 didn't save this.`}
+            </p>
+            {platformFilter === "PERPLEXITY" ? (
+              <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
+                Not available for Perplexity. Pick All Models, ChatGPT, Claude or Gemini.
+              </div>
+            ) : spanRuns.length === 0 ? (
+              <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
+                No Live Search crawl in this range saved which source backs each part of an answer. That started in
+                mid-November 2026; run a Live Search from{" "}
+                <a href={`/clients/${id}/settings`} className="underline">
+                  Settings
+                </a>{" "}
+                to see it.
+              </div>
+            ) : (
+              <>
+                {backing.total.naming === 0 ? (
+                  <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
+                    No {platformFilter ? (PLATFORM_LABEL[platformFilter] ?? platformFilter) : "ChatGPT, Claude or Gemini"}{" "}
+                    answer in this range names {brandName}.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-sm">
+                      <thead className={thead}>
+                        <tr>
+                          <th className="px-4 py-2 font-medium">Engine</th>
+                          <th className="px-4 py-2 text-right font-medium tabular-nums">Answers Naming You</th>
+                          <th className="px-4 py-2 text-right font-medium tabular-nums">Your Site</th>
+                          <th className="px-4 py-2 text-right font-medium tabular-nums">Third-Party Only</th>
+                          <th className="px-4 py-2 text-right font-medium tabular-nums">Nothing Linked</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {[
+                          ...backingPlatforms.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p, counts: backing.byPlatform[p], total: false })),
+                          ...(backingPlatforms.length > 1
+                            ? [{ key: "all", label: "All engines", counts: backing.total, total: true }]
+                            : []),
+                        ].map((row) => (
+                          <tr
+                            key={row.key}
+                            className={row.total ? "bg-zinc-50 font-medium dark:bg-zinc-900/60" : "bg-white dark:bg-zinc-950"}
+                          >
+                            <td className="px-4 py-2 whitespace-nowrap text-zinc-900 dark:text-zinc-100">{row.label}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{row.counts.naming}</td>
+                            <BackingCell counts={row.counts} kind="own" />
+                            <BackingCell counts={row.counts} kind="thirdParty" />
+                            <BackingCell counts={row.counts} kind="none" />
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {backing.uncredited.answers > 0 && (
+                  <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    Your site was also a source for {backing.uncredited.answers} answer
+                    {backing.uncredited.answers === 1 ? "" : "s"} that never named {brandName} (
+                    {Object.entries(backing.uncredited.byPlatform)
+                      .sort(([a], [b]) => (PLATFORM_LABEL[a] ?? a).localeCompare(PLATFORM_LABEL[b] ?? b))
+                      .map(([p, n]) => `${PLATFORM_LABEL[p] ?? p} ${n}`)
+                      .join(", ")}
+                    ).
+                    {backing.uncredited.topPage && (
+                      <>
+                        {" "}
+                        Used most:{" "}
+                        <a
+                          href={backing.uncredited.topPage.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-700 underline dark:text-blue-400"
+                        >
+                          {backing.uncredited.topPage.title ?? shortUrl(backing.uncredited.topPage.url)}
+                        </a>{" "}
+                        ({backing.uncredited.topPage.answers} answer{backing.uncredited.topPage.answers === 1 ? "" : "s"}).
+                      </>
+                    )}
+                  </p>
+                )}
+
+                {backing.pages.length > 0 && (
+                  <>
+                    <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                      Pages Linked Where AI Names You
+                    </h3>
+                    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                      <table className="w-full text-sm">
+                        <thead className={thead}>
+                          <tr>
+                            <th className="px-4 py-2 font-medium">Page</th>
+                            <th className="px-4 py-2 font-medium">Site</th>
+                            <th className="px-4 py-2 text-right font-medium tabular-nums">Answers</th>
+                            <th className="px-4 py-2 font-medium">Engines</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                          {backing.pages.slice(0, 15).map((p) => (
+                            <tr key={p.url} className={p.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
+                              <td className="min-w-[13rem] px-4 py-2">
+                                <a href={p.url} target="_blank" rel="noreferrer" className="text-blue-700 underline dark:text-blue-400">
+                                  {p.title ?? shortUrl(p.url)}
+                                </a>
+                                <div className="text-xs break-all text-zinc-400 dark:text-zinc-500">{shortUrl(p.url)}</div>
+                              </td>
+                              <td className="px-4 py-2 whitespace-nowrap text-zinc-600 dark:text-zinc-400">
+                                {p.domain}
+                                {p.isOwn && <YouBadge />}
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums">{p.answers}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-zinc-600 dark:text-zinc-400">
+                                {p.platforms
+                                  .map((pl) => PLATFORM_LABEL[pl] ?? pl)
+                                  .sort()
+                                  .join(", ")}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {backing.pages.length > 15 && (
+                      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                        Showing the top 15 of {backing.pages.length} pages.
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </section>
 
