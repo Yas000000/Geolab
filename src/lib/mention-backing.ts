@@ -47,11 +47,10 @@ function fold(s: string): string {
 
 // URLs and bare domains, blanked out before looking for the client's name:
 // ChatGPT's inline links ("([yellowbrickprogram.com](https://...))") contain
-// the brand without the answer naming the client. Same pattern and rule as
-// python_pipeline/parser.py mask_links(): the TLD must be lowercase (so
-// "Yellowbrick.Their" isn't a domain), and a bare domain that is exactly one
-// of the names stays ("Clutch.co" is a brand named like a domain).
-const URL_OR_DOMAIN = /\bhttps?:\/\/[^\s)\]]+|\b(?:[A-Za-z0-9-]+\.)+[a-z]{2,}\b(?:\/[^\s)\]]*)?/g;
+// the brand, and the pipeline's own substring check counts those as a
+// mention even when the answer never names the client (17 of 138 stored
+// Yellowbrick mentions, all ChatGPT Live Search, as of 2026-11-13).
+const URL_OR_DOMAIN = /\bhttps?:\/\/[^\s)\]]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s)\]]*)?/gi;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -61,10 +60,7 @@ function escapeRegExp(s: string): string {
 export function mentionPositions(text: string, names: string[]): number[] {
   const cleaned = [...new Set(names.map((n) => fold(n.trim())).filter(Boolean))].sort((a, b) => b.length - a.length);
   if (!cleaned.length || !text) return [];
-  const keep = new Set(cleaned.map((n) => n.toLowerCase()));
-  const masked = fold(text).replace(URL_OR_DOMAIN, (m) =>
-    !/^https?:\/\//i.test(m) && keep.has(m.toLowerCase()) ? m : " ".repeat(m.length),
-  );
+  const masked = fold(text).replace(URL_OR_DOMAIN, (m) => " ".repeat(m.length));
   const re = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${cleaned.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_])`, "giu");
   return [...masked.matchAll(re)].map((m) => m.index);
 }
