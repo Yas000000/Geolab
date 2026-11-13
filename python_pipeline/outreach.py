@@ -31,7 +31,12 @@ from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import anthropic
 import httpx
-from bs4 import BeautifulSoup
+from python_pipeline.page_check import (
+    check_page as _check_page,
+    clean_url,
+    is_site_itself as _is_site_itself,
+    looks_blocked as _looks_blocked,
+)
 
 RESEARCH_MODEL = "claude-opus-5-5"
 # USD list prices (Nov 2026): Opus 5.5 per million tokens, and per search.
@@ -161,24 +166,6 @@ SITE_TYPES = [
 REFUSALS_BEFORE_SKIP = 4
 _BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                "Chrome/130.0 Safari/537.36")
-_BLOCK_MARKERS = re.compile(r"just a moment|verify you are human|access denied|attention required|"
-                            r"are you a robot|checking your browser|enable javascript and cookies", re.I)
-
-
-def _looks_blocked(html: str) -> bool:
-    soup = BeautifulSoup(html, "html.parser")
-    title = soup.title.get_text(" ") if soup.title else ""
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    visible = re.sub(r"\s+", " ", soup.get_text(" ")).strip()
-    return len(visible) < 300 or bool(_BLOCK_MARKERS.search(title + " " + visible[:1500]))
-
-
-def clean_url(url: str) -> str:
-    """A cited URL minus tracking parameters and fragment ("?utm_source=openai")."""
-    parts = urlsplit(url.strip())
-    query = "&".join(q for q in parts.query.split("&") if q and not q.lower().startswith("utm_"))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 
 def _page_key(url: str) -> str:
@@ -234,44 +221,6 @@ def _google_check(url: str, brand: str, counter: list) -> dict | None:
     except (httpx.HTTPError, ValueError):
         return None
     return None
-
-
-def _is_site_itself(name: str, site_domain: str) -> bool:
-    """Either name contains the other: "Clutch" on clutch.co, "O'Dwyer's" on odwyerpr.com."""
-    site_key = re.sub(r"[^a-z0-9]", "", site_domain.split(".")[0])
-    dotless = re.sub(r"[^a-z0-9]", "", site_domain.rsplit(".", 1)[0]) if site_domain.count(".") == 1 else site_key
-    trimmed = re.sub(r"(pr|media|hq|inc|group|news|mag)$", "", site_key)
-    nk = re.sub(r"[^a-z0-9]", "", name.lower())
-    if len(nk) < 4:
-        return False
-    keys = {site_key, dotless, re.sub(r"[^a-z0-9]", "", site_domain)} | ({trimmed} if len(trimmed) >= 5 else set())
-    return any(k and (k in nk or nk in k) for k in keys)
-
-
-def _check_page(html: str, how: str, brand: str, client_host: str, named_brands: set[str], site_domain: str) -> dict:
-    soup = BeautifulSoup(html, "html.parser")
-    links = " ".join(a.get("href", "") for a in soup.find_all("a"))
-    for tag in soup(["script", "style", "noscript", "svg"]):
-        tag.decompose()
-    text = re.sub(r"\s+", " ", soup.get_text(" "))
-    # Case-sensitive on purpose: a brand that is also a word is capitalized when it's a listed firm.
-    listed = bool(re.search(rf"\b{re.escape(brand)}\b", text)) or client_host in links.lower()
-    found = []
-    for name in named_brands:
-        if len(name) < 3 or name.casefold() == brand.casefold():
-            continue
-        if _is_site_itself(name, site_domain):
-            continue
-        if " " not in name and re.search(rf"\b{re.escape(name.lower())}\b", text):
-            continue
-        m = re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text)
-        if m:
-            found.append((m.start(), name))
-    found.sort()
-    client_match = re.search(rf"\b{re.escape(brand)}\b", text)
-    position = 1 + sum(1 for start, _ in found if start < client_match.start()) if client_match else None
-    return {"status": "checked", "fetched_with": how, "listed": listed, "position": position,
-            "competitors_on_page": [name for _, name in found[:8]], "competitors_found": len(found)}
 
 
 def check_pages(urls_by_site: dict[str, list[str]], brand: str, client_host: str,
@@ -893,15 +842,16 @@ def _estimate_one(brand, domain, item, model) -> tuple[dict | None, float]:
     return None, cost
 
 
-def estimate_actions(brand, domain, items: list[dict], cache: dict, model=RESEARCH_MODEL, workers=8):
+def estimate_actions(brand, domain, items: list[dict], cache: dict, model=RESEARCH_MODEL, workers=8, ai=True):
     """({prompt: {action_number: estimate}}, new cache entries, cost). cache: {prompt: {"sig", "estimates"}}
-    from an earlier build; entries whose inputs are unchanged are reused."""
+    from an earlier build; entries whose inputs are unchanged are reused. With ai=False nothing is
+    estimated: every prompt keeps its earlier estimate, if it has one, even where inputs changed."""
     def sig(item):
         return hashlib.sha1(f"{brand}\n{item['answers']}\n{item['actions']}".encode("utf-8")).hexdigest()
 
     out_cache = {it["prompt"]: cache[it["prompt"]] for it in items
-                 if cache.get(it["prompt"], {}).get("sig") == sig(it)}
-    todo = [it for it in items if it["prompt"] not in out_cache]
+                 if it["prompt"] in cache and (not ai or cache[it["prompt"]].get("sig") == sig(it))}
+    todo = [it for it in items if it["prompt"] not in out_cache] if ai else []
     cost = 0.0
     if todo:
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -1021,14 +971,17 @@ Be conservative. Reply with JSON only:
 plain American English, no em dashes, no Oxford comma"}}"""
 
 
-def placed_list_rate(brand, domain, evidence: dict, cache: dict | None, model=RESEARCH_MODEL):
+def placed_list_rate(brand, domain, evidence: dict, cache: dict | None, model=RESEARCH_MODEL, ai=True):
     """(rate or None, cache entry or None, cost). Reuses the earlier build's rate when its inputs match."""
     if PLACED_LIST_RATE:
         return {"low": PLACED_LIST_RATE[0], "high": PLACED_LIST_RATE[1], "source": "set", "reason": ""}, None, 0.0
     prompt = _PLACED_RATE_PROMPT.format(brand=brand, domain=domain, **evidence)
     sig = hashlib.sha1(prompt.encode("utf-8")).hexdigest()
-    if cache and cache.get("sig") == sig:
+    # ai=False (applying a re-check): the earlier rate whatever its inputs, and no new estimate.
+    if cache and (cache.get("sig") == sig or not ai):
         return cache["rate"], cache, 0.0
+    if not ai:
+        return None, None, 0.0
     cost = 0.0
     for _ in range(3):
         try:
@@ -1045,7 +998,7 @@ def placed_list_rate(brand, domain, evidence: dict, cache: dict | None, model=RE
     return None, None, cost
 
 
-def build_levers(brand, domain, client_host, rows, platforms, plan, names, placed_cache):
+def build_levers(brand, domain, client_host, rows, platforms, plan, names, placed_cache, ai=True):
     total = len(rows)
     owned = {s["domain"] for s in plan["sites"] if s["research"].get("competitor_owned") or s["kind"] == "own_page"}
     cited_domains = {c["domain"] for row in rows for _, cell in _answered_cells(row, platforms) for c in cell["citations"]}
@@ -1077,7 +1030,7 @@ def build_levers(brand, domain, client_host, rows, platforms, plan, names, place
         "own_high": f"{OWN_CONTENT_RATE[1]:.0%}",
         "prompts": "\n".join(f'- "{row["prompt"]}"' for row in rows),
     }
-    list_rate, placed_entry, cost = placed_list_rate(brand, domain, evidence, placed_cache)
+    list_rate, placed_entry, cost = placed_list_rate(brand, domain, evidence, placed_cache, ai=ai)
 
     per_prompt = {}
     for row in rows:
@@ -1113,7 +1066,8 @@ def build_levers(brand, domain, client_host, rows, platforms, plan, names, place
 # ── The whole plan (geo_citation_checker.py's wiring) ─────────────────────────
 
 def build_plan(brand: str, client_domain: str, rows: list[dict], platforms: list[str], target_domains: list[str],
-               named_brands: set[str], site_cache: dict, placed_cache: dict | None, estimate_cache: dict) -> dict:
+               named_brands: set[str], site_cache: dict, placed_cache: dict | None, estimate_cache: dict,
+               ai: bool = True) -> dict:
     """site_cache: {site: {"research", "pages": {clean url: check}, "researched_at"}}. Returns the plan
     as the Outreach Plan tab renders it, the caches the next build can reuse, and the cost."""
     client_host = domain_of(client_domain)
@@ -1128,7 +1082,7 @@ def build_plan(brand: str, client_domain: str, rows: list[dict], platforms: list
     rank_names = tuple(sorted(n for n in named_brands if not any(_is_site_itself(n, d) for d in researched)))
 
     levers, per_prompt, rates, placed_entry, cost = build_levers(
-        brand, client_domain, client_host, rows, platforms, plan, rank_names, placed_cache)
+        brand, client_domain, client_host, rows, platforms, plan, rank_names, placed_cache, ai=ai)
     rank_plan(plan, levers, EXISTING_WEIGHT)
     own_lever = levers[0]
     list_lever = next((lv for lv in levers if lv["lever"] == "list"), None)
@@ -1218,7 +1172,8 @@ def build_plan(brand: str, client_domain: str, rows: list[dict], platforms: list
     test_limit = int(os.environ.get("OUTREACH_TEST_ESTIMATE_LIMIT") or 0)
     if test_limit:
         estimate_items = estimate_items[:test_limit]
-    estimates, estimate_entries, est_cost = estimate_actions(brand, client_domain, estimate_items, estimate_cache or {})
+    estimates, estimate_entries, est_cost = estimate_actions(brand, client_domain, estimate_items, estimate_cache or {},
+                                                             ai=ai)
     cost += est_cost
     for row in rows:
         for i, rec in enumerate(estimated(row["outreach"]["recommendations"]), 1):
@@ -1242,6 +1197,8 @@ def build_plan(brand: str, client_domain: str, rows: list[dict], platforms: list
             "model": RESEARCH_MODEL,
             "rates": rates,
             "existing_weight": EXISTING_WEIGHT,
+            # Firm names the Outreach Helper looks for when it re-checks blocked pages.
+            "named_brands": sorted(named_brands),
             "prompts": [{"prompt": row["prompt"], "category": row.get("category"),
                          "recommendations": row["outreach"]["recommendations"],
                          "listed_here": row["outreach"]["listed_here"]} for row in rows],

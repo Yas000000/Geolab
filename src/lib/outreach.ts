@@ -322,6 +322,15 @@ export async function runOutreachStep(planId: string, origin: string): Promise<v
         named_brands: sites.named_brands,
       });
       cost += checked.cost;
+      // A page the server still can't load keeps what Chrome on the user's PC last read on it
+      // (the tab's "Re-check blocked pages", helper/outreach_helper.py), with that check's date.
+      const chrome = await chromeChecksFromLastPlan(plan.clientId);
+      for (const pages of Object.values(checked.checks)) {
+        for (const [url, check] of Object.entries(pages)) {
+          const earlier = chrome.get(url);
+          if (earlier && (check.status === "unreachable" || check.status === "indexed")) pages[url] = earlier;
+        }
+      }
       Object.assign(state, {
         stage: "research",
         targets: crawl.targets,
@@ -465,6 +474,159 @@ export async function runOutreachStep(planId: string, origin: string): Promise<v
       })
       .catch(() => undefined);
   }
+}
+
+// ── Re-check blocked pages (phase 4) ─────────────────────────────────────────
+// The tab's button sends pages the server couldn't load to the Outreach Helper on the user's
+// PC (helper/outreach_helper.py), which reads them in real Chrome; the tab posts the results
+// here. Applying them recomputes the plan with no paid calls (python plan with ai=false).
+
+/** The fields of one page's listing check, as the plan stores it alongside url/title/count. */
+const CHECK_FIELDS = ["status", "fetched_with", "listed", "position", "competitors_on_page", "competitors_found", "reason", "checked_at"];
+
+interface StoredPlan {
+  sites: { domain: string; research: Research; researched_at: string | null; pages: (PageCheck & { url: string })[] }[];
+  caches?: { placed?: unknown; estimates?: unknown };
+  named_brands?: string[];
+  crawlDate?: string;
+  platforms?: string[];
+  researchedThisBuild?: number;
+  pagesChecked?: number;
+}
+
+function checksFromPlan(plan: StoredPlan): Record<string, Record<string, PageCheck>> {
+  return Object.fromEntries(
+    plan.sites.map((s) => [
+      s.domain,
+      Object.fromEntries(s.pages.map((p) => [p.url, Object.fromEntries(CHECK_FIELDS.filter((k) => k in p).map((k) => [k, p[k]]))])),
+    ]),
+  );
+}
+
+/** Chrome checks that loaded a page, from the client's last finished plan, by URL. */
+async function chromeChecksFromLastPlan(clientId: string): Promise<Map<string, PageCheck>> {
+  const last = await prisma.outreachPlan.findFirst({
+    where: { clientId, status: "COMPLETE" },
+    orderBy: { createdAt: "desc" },
+    select: { plan: true },
+  });
+  const out = new Map<string, PageCheck>();
+  const plan = last?.plan as StoredPlan | null;
+  for (const [, pages] of Object.entries(plan?.sites ? checksFromPlan(plan) : {})) {
+    for (const [url, check] of Object.entries(pages)) {
+      if (check.fetched_with === "chrome" && check.status === "checked") out.set(url, check);
+    }
+  }
+  return out;
+}
+
+export type RecheckOutcome =
+  | { ok: true; applied: number; loaded: number; listed: number }
+  | { ok: false; reason: "no_plan" | "running" | "client_not_found" };
+
+/**
+ * Saves a re-check's results into the client's latest plan and recomputes it with no paid calls:
+ * estimates and the placed-list rate come from that plan's caches. A result replaces a page's
+ * check when Chrome loaded the page, or when the server couldn't load it either.
+ */
+export async function applyRecheck(
+  clientId: string,
+  incoming: Record<string, Record<string, PageCheck>>,
+  origin: string,
+): Promise<RecheckOutcome> {
+  const info = await clientBrand(clientId);
+  if (!info?.domain) return { ok: false, reason: "client_not_found" };
+  await expireStaleBuilds(clientId);
+  if (await prisma.outreachPlan.findFirst({ where: { clientId, status: "RUNNING" }, select: { id: true } })) {
+    return { ok: false, reason: "running" };
+  }
+  const row = await prisma.outreachPlan.findFirst({ where: { clientId, status: "COMPLETE" }, orderBy: { createdAt: "desc" } });
+  const stored = row?.plan as (StoredPlan & Record<string, unknown>) | null;
+  if (!row || !stored?.sites) return { ok: false, reason: "no_plan" };
+  const { brand, domain } = info;
+
+  const checks = checksFromPlan(stored);
+  let applied = 0;
+  let loaded = 0;
+  let listed = 0;
+  for (const [site, pages] of Object.entries(incoming)) {
+    for (const [url, check] of Object.entries(pages ?? {})) {
+      const current = checks[site]?.[url];
+      if (!current || typeof check !== "object" || !check) continue;
+      if (check.status === "checked" || current.status === "unreachable") {
+        checks[site][url] = { ...check, fetched_with: "chrome" };
+        applied += 1;
+        if (check.status === "checked") loaded += 1;
+        if (check.listed) listed += 1;
+      }
+    }
+  }
+
+  const crawl = await crawlRows(row.runId, siteDomain(domain));
+  const namedBrands =
+    stored.named_brands ??
+    (
+      await py<{ named_brands: string[] }>(origin, {
+        action: "sites",
+        client_domain: domain,
+        rows: crawl.rows,
+        platforms: crawl.platforms,
+        target_domains: crawl.targets,
+        extracted: crawl.extracted,
+      })
+    ).named_brands;
+  const research = new Map(
+    (
+      await prisma.outreachSite.findMany({
+        where: { clientId, domain: { in: stored.sites.map((s) => s.domain) } },
+        select: { domain: true, research: true, researchedAt: true },
+      })
+    ).map((c) => [c.domain, c]),
+  );
+  const siteCache = Object.fromEntries(
+    stored.sites.map((s) => {
+      const r = research.get(s.domain);
+      const usable = r && researchUsable(r.research);
+      return [
+        s.domain,
+        {
+          research: usable ? r.research : { error: s.research.error ?? "not researched" },
+          pages: checks[s.domain] ?? {},
+          researched_at: usable ? r.researchedAt.toISOString() : null,
+        },
+      ];
+    }),
+  );
+  const result = await py<{ plan: Record<string, unknown>; caches: Record<string, unknown> }>(origin, {
+    action: "plan",
+    brand,
+    client_domain: domain,
+    rows: crawl.rows,
+    platforms: crawl.platforms,
+    target_domains: stored.sites.map((s) => s.domain),
+    named_brands: namedBrands,
+    site_cache: siteCache,
+    placed_cache: stored.caches?.placed ?? null,
+    estimate_cache: stored.caches?.estimates ?? {},
+    ai: false,
+  });
+  await prisma.outreachPlan.update({
+    where: { id: row.id },
+    data: {
+      plan: {
+        ...result.plan,
+        caches: result.caches,
+        brand,
+        domain,
+        crawlDate: stored.crawlDate,
+        platforms: stored.platforms,
+        researchedThisBuild: stored.researchedThisBuild,
+        pagesChecked: stored.pagesChecked,
+        recheck: { at: new Date().toISOString(), applied, loaded, listed },
+      } as object,
+    },
+  });
+  return { ok: true, applied, loaded, listed };
 }
 
 export async function latestOutreachPlans(clientId: string) {

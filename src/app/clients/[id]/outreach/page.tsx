@@ -2,6 +2,8 @@ import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { OutreachBuildPanel } from "@/components/outreach-build-panel";
+import { OutreachRecheckPanel } from "@/components/outreach-recheck-panel";
+import { siteDomain } from "@/lib/citations";
 import { CATEGORY_LABEL } from "@/lib/geo-platform-map";
 import { COST_PAGE_CHECKS, COST_PER_PROMPT, COST_PER_SITE, latestOutreachPlans, outreachOverview } from "@/lib/outreach";
 
@@ -17,6 +19,8 @@ interface PageCheck {
   position?: number | null;
   competitors_on_page?: string[];
   reason?: string;
+  fetched_with?: string;
+  checked_at?: string;
 }
 interface Route {
   type: string;
@@ -51,6 +55,7 @@ interface Site {
   top_url: string;
   top_title: string;
   page_check: PageCheck;
+  pages: PageCheck[];
   listing: { listed: PageCheck[]; missing: PageCheck[]; unknown: PageCheck[]; total: number };
   listing_changed: boolean;
   researched_at: string | null;
@@ -94,6 +99,19 @@ interface Plan {
   existing_weight: number;
   rates: { own: Rate; list: Rate | null };
   prompts: { prompt: string; category: string | null; recommendations: Rec[] }[];
+  named_brands?: string[];
+  recheck?: { at: string; applied: number; loaded: number; listed: number };
+}
+
+// Pages the server couldn't read because the site refuses automated visits (or only Google's copy
+// was read): what "Re-check blocked pages" sends to the Outreach Helper. A missing page (404) or a
+// PDF isn't blocked, so it isn't re-checked.
+function blockedPages(plan: Plan): { site: string; url: string }[] {
+  return plan.sites.flatMap((s) =>
+    s.pages
+      .filter((p) => p.status === "indexed" || (p.status === "unreachable" && !/^(HTTP 404|HTTP 410|not a web page)/.test(p.reason ?? "")))
+      .map((p) => ({ site: s.domain, url: p.url })),
+  );
 }
 
 const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -159,6 +177,22 @@ function OnPage({ s }: { s: Site }) {
         <span className="block text-xs text-zinc-500 dark:text-zinc-400">on any of {L.total} cited pages</span>
       ) : null}
     </span>
+  );
+}
+
+/** Which of a site's cited pages were read in Chrome on the user's PC (Re-check blocked pages). */
+function ChromeNote({ pages }: { pages: PageCheck[] }) {
+  const tried = pages.filter((p) => p.fetched_with === "chrome");
+  if (!tried.length) return null;
+  const read = tried.filter((p) => p.status === "checked").length;
+  const at = tried.map((p) => p.checked_at).filter(Boolean).sort().pop();
+  const when = at ? ` (${crawlDay(new Date(at))})` : "";
+  return (
+    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      {read
+        ? `${read} of the cited pages ${read === 1 ? "was" : "were"} read in Chrome on this PC${when}, since the site blocks the portal's server.`
+        : `The site blocks the portal's server, and Chrome on this PC couldn't read its pages either${when}.`}
+    </p>
   );
 }
 
@@ -240,6 +274,7 @@ function SiteCard({ s, num, brand, total }: { s: Site; num: number; brand: strin
             )}
           </span>
         </div>
+        <ChromeNote pages={s.pages} />
         {L.listed.length > 0 && L.total > 1 && (
           <ul className="ml-4 list-disc space-y-1">
             {L.listed.slice(0, 8).map((p) => (
@@ -361,6 +396,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
   const ownLever = leversByKey.get("own");
   const skipped = plan?.sites.filter((s) => s.kind === "skip" || s.kind === "unknown") ?? [];
   const brand = plan?.brand ?? client.name;
+  const blocked = plan ? blockedPages(plan) : [];
   const total = plan?.total_prompts ?? 0;
 
   // Prompt Action Plan rows grouped by prompt category, in prompt order.
@@ -409,6 +445,20 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
           costEstimate={overview.costEstimate}
           disabledReason={disabledReason}
         />
+        {plan && !running && blocked.length > 0 && (
+          <OutreachRecheckPanel
+            clientId={id}
+            brand={brand}
+            clientHost={siteDomain(client.domain) ?? ""}
+            namedBrands={plan.named_brands ?? []}
+            pages={blocked}
+            lastRecheck={
+              plan.recheck
+                ? `${crawlDay(new Date(plan.recheck.at))}: Chrome loaded ${plan.recheck.loaded} of ${plan.recheck.applied} pages, and ${brand} is listed on ${plan.recheck.listed}`
+                : null
+            }
+          />
+        )}
       </section>
 
       {plan && (

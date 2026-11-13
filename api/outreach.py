@@ -58,6 +58,8 @@ class OutreachRequest(BaseModel):
     site_cache: dict[str, dict] = {}
     placed_cache: dict | None = None
     estimate_cache: dict = {}
+    # plan with ai=False makes no paid calls (applying a re-check of blocked pages)
+    ai: bool = True
 
 
 @app.post("/api/outreach")
@@ -79,6 +81,7 @@ def outreach(p: OutreachRequest) -> dict:
                                          p.earlier, p.earlier_at)
             return {"research": result, "cost": cost}
         return build_plan(p.brand, p.client_domain, [r.model_dump() for r in p.rows], p.platforms,
-                          p.target_domains, set(p.named_brands), p.site_cache, p.placed_cache, p.estimate_cache)
+                          p.target_domains, set(p.named_brands), p.site_cache, p.placed_cache, p.estimate_cache,
+                          ai=p.ai)
     except Exception as e:  # the TS side stores the message on the failed build
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}")
