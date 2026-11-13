@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { segment: "traffic", label: "GEO Traffic" },
   { segment: "rankings", label: "GEO Rankings" },
   { segment: "citations", label: "Citations" },
+  { segment: "outreach", label: "Outreach Plan" },
   { segment: "competitors", label: "Competitors" },
   { segment: "reports", label: "Reports" },
   { segment: "settings", label: "Settings" },

@@ -13,3 +13,6 @@ google-genai==3.2.0
 # Imported directly (Perplexity, Gemini citation redirects, the crawler
 # check), so listed here rather than relied on as an SDK dependency.
 httpx==0.28.1
+# Outreach Plan listing checks (python_pipeline/outreach.py) read cited pages' HTML.
+beautifulsoup4==4.14.3
+soupsieve==2.8.3

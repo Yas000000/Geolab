@@ -7,6 +7,7 @@
   "functions": {
     "api/run_pipeline.py": { "maxDuration": 800 },
     "api/crawl_check.py": { "maxDuration": 300 },
+    "api/outreach.py": { "maxDuration": 800 },
     "src/app/api/queues/run-scheduled-client/route.ts": {
       "experimentalTriggers": [
         { "type": "queue/v2beta", "topic": "llm-pipeline-jobs", "retryAfterSeconds": 60, "maxDeliveries": 5 }

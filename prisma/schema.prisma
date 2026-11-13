@@ -45,6 +45,54 @@ model Client {
   benchmarkSnapshots      BenchmarkSnapshot[]
   crawlChecks             CrawlCheck[]
   monthlyReports          MonthlyReport[]
+  outreachPlans           OutreachPlan[]
+  outreachSites           OutreachSite[]
+}
+
+enum OutreachStatus {
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+// One Outreach Plan build (Outreach Plan tab, src/lib/outreach.ts): built from one Live
+// Search crawl, only when someone clicks Build or Rebuild -- it costs real money (site
+// research with web search), so nothing builds one on a schedule. plan is the finished
+// plan exactly as the tab renders it (python_pipeline/outreach.py build_plan), plus the
+// estimate and placed-list caches the next build reuses. progress is set while RUNNING.
+model OutreachPlan {
+  id          String         @id @default(cuid())
+  clientId    String
+  client      Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  runId       String
+  status      OutreachStatus @default(RUNNING)
+  progress    Json?
+  plan        Json?
+  costUsd     Float          @default(0)
+  error       String?        @db.Text
+  triggeredBy String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  completedAt DateTime?
+
+  @@index([clientId, createdAt])
+}
+
+// A cited site's outreach research for one client (who runs it, every route onto it,
+// fees with sources), kept across builds so a rebuild only pays for sites it hasn't
+// researched. Saved as each site finishes, so an interrupted build resumes for free.
+// research.listing_basis is the set of listed pages the research was told about.
+model OutreachSite {
+  id           String   @id @default(cuid())
+  clientId     String
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  domain       String
+  research     Json
+  model        String
+  costUsd      Float    @default(0)
+  researchedAt DateTime @default(now())
+
+  @@unique([clientId, domain])
 }
 
 // A generated monthly client report (src/lib/monthly-report.ts): one calendar
