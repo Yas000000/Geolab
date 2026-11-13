@@ -96,7 +96,7 @@ function BackingCell({ counts, kind }: { counts: BackingCounts; kind: "own" | "t
     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
       {n}
       <span className="ml-1.5 text-xs font-normal text-zinc-400 dark:text-zinc-500">
-        {counts.naming ? `${Math.round((n / counts.naming) * 100)}%` : "–"}
+        {counts.mentioning ? `${Math.round((n / counts.mentioning) * 100)}%` : "–"}
       </span>
     </td>
   );
@@ -167,9 +167,11 @@ export default async function ClientCitationsPage({
 
   // What backs your mentions: only crawls that saved per-claim citation spans
   // (Live Search since 2026-11-13), and not Perplexity, which gives none.
-  // Answer text is fetched only for answers that could matter -- ones whose
-  // text contains a client name, or that cite the client's site -- so the
-  // page doesn't pull every answer's full text.
+  // A mention is any reference to the client: name, domain in the text, or
+  // the client's site cited (see src/lib/mention-backing.ts). Answer text is
+  // fetched only for answers that could matter -- ones whose text contains a
+  // client name or the client's domain, or that cite the client's site -- so
+  // the page doesn't pull every answer's full text.
   const brandName = client.brands[0]?.name ?? client.name;
   const brandNames = client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]);
   const spanRuns = citationTrackedRuns(client.runs).filter(
@@ -185,7 +187,12 @@ export default async function ClientCitationsPage({
             id: { in: backingScope.map((r) => r.id) },
             OR: [
               ...brandNames.map((n) => ({ responseText: { contains: n, mode: "insensitive" as const } })),
-              ...(ownDomain ? [{ citations: { some: { domain: { endsWith: ownDomain } } } }] : []),
+              ...(ownDomain
+                ? [
+                    { responseText: { contains: ownDomain, mode: "insensitive" as const } },
+                    { citations: { some: { domain: { endsWith: ownDomain } } } },
+                  ]
+                : []),
             ],
           },
           select: { id: true, responseText: true },
@@ -362,10 +369,10 @@ export default async function ClientCitationsPage({
           <section className="mb-8">
             <h2 className={sectionTitle}>What Backs Your Mentions</h2>
             <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              When an answer names {brandName}, the page the AI linked to that part of the answer: your own site, a
-              third-party page, or nothing. Your Site counts answers where at least one of your pages is linked there,
-              even alongside others. ChatGPT, Claude and Gemini only: Perplexity doesn&apos;t say which source backs
-              which part of its answer.
+              Every answer that mentions {brandName} by name or by linking your site, and the page the AI linked to
+              that mention: your own site, a third-party page or nothing. Your Site counts answers that link at least
+              one of your pages, even alongside others. ChatGPT, Claude and Gemini only: Perplexity doesn&apos;t say
+              which source backs which part of its answer.
               {spanRuns.length > 0 &&
                 ` Based on ${spanRuns.length} Live Search crawl${spanRuns.length === 1 ? "" : "s"} in this range; crawls from before mid-November 2026 didn't save this.`}
             </p>
@@ -384,10 +391,10 @@ export default async function ClientCitationsPage({
               </div>
             ) : (
               <>
-                {backing.total.naming === 0 ? (
+                {backing.total.mentioning === 0 ? (
                   <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
                     No {platformFilter ? (PLATFORM_LABEL[platformFilter] ?? platformFilter) : "ChatGPT, Claude or Gemini"}{" "}
-                    answer in this range names {brandName}.
+                    answer in this range mentions {brandName}.
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -395,7 +402,7 @@ export default async function ClientCitationsPage({
                       <thead className={thead}>
                         <tr>
                           <th className="px-4 py-2 font-medium">Engine</th>
-                          <th className="px-4 py-2 text-right font-medium tabular-nums">Answers Naming You</th>
+                          <th className="px-4 py-2 text-right font-medium tabular-nums">Answers Mentioning You</th>
                           <th className="px-4 py-2 text-right font-medium tabular-nums">Your Site</th>
                           <th className="px-4 py-2 text-right font-medium tabular-nums">Third-Party Only</th>
                           <th className="px-4 py-2 text-right font-medium tabular-nums">Nothing Linked</th>
@@ -413,7 +420,7 @@ export default async function ClientCitationsPage({
                             className={row.total ? "bg-zinc-50 font-medium dark:bg-zinc-900/60" : "bg-white dark:bg-zinc-950"}
                           >
                             <td className="px-4 py-2 whitespace-nowrap text-zinc-900 dark:text-zinc-100">{row.label}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{row.counts.naming}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{row.counts.mentioning}</td>
                             <BackingCell counts={row.counts} kind="own" />
                             <BackingCell counts={row.counts} kind="thirdParty" />
                             <BackingCell counts={row.counts} kind="none" />
@@ -424,37 +431,10 @@ export default async function ClientCitationsPage({
                   </div>
                 )}
 
-                {backing.uncredited.answers > 0 && (
-                  <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                    Your site was also a source for {backing.uncredited.answers} answer
-                    {backing.uncredited.answers === 1 ? "" : "s"} that never named {brandName} (
-                    {Object.entries(backing.uncredited.byPlatform)
-                      .sort(([a], [b]) => (PLATFORM_LABEL[a] ?? a).localeCompare(PLATFORM_LABEL[b] ?? b))
-                      .map(([p, n]) => `${PLATFORM_LABEL[p] ?? p} ${n}`)
-                      .join(", ")}
-                    ).
-                    {backing.uncredited.topPage && (
-                      <>
-                        {" "}
-                        Used most:{" "}
-                        <a
-                          href={backing.uncredited.topPage.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-700 underline dark:text-blue-400"
-                        >
-                          {backing.uncredited.topPage.title ?? shortUrl(backing.uncredited.topPage.url)}
-                        </a>{" "}
-                        ({backing.uncredited.topPage.answers} answer{backing.uncredited.topPage.answers === 1 ? "" : "s"}).
-                      </>
-                    )}
-                  </p>
-                )}
-
                 {backing.pages.length > 0 && (
                   <>
                     <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                      Pages Linked Where AI Names You
+                      Pages Linked Where AI Mentions You
                     </h3>
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                       <table className="w-full text-sm">

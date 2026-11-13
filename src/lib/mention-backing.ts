@@ -1,9 +1,16 @@
-// "What backs your mentions": when an AI answer names the client, which
-// cited page is linked to that part of the answer -- the client's own site,
-// a third-party page, or nothing. Uses the per-claim citation spans saved
+// "What backs your mentions": when an AI answer mentions the client, which
+// cited page is linked to that mention -- the client's own site, a
+// third-party page, or nothing. Uses the per-claim citation spans saved
 // with each Live Search crawl since 2026-11-13 (Citation.spans; Claude and
 // Gemini mark the cited claim, ChatGPT marks the inline link it puts inside
 // the sentence; Perplexity gives none).
+//
+// A mention is ANY reference to the client (user's rule, 2026-11-12: "the
+// domain counts as a mention too no matter how it's referenced"): the name
+// in the text, the client's domain in the text (ChatGPT's inline
+// "([yellowbrickprogram.com](https://...))" links), or the client's site
+// cited as a source. So an answer that cites the client's site anywhere is
+// a mention backed by the client's own site.
 //
 // The unit a mention is matched in is its LIST ITEM (an AI answer is mostly
 // a numbered/bulleted list of providers), else its sentence in prose. Not
@@ -45,24 +52,22 @@ function fold(s: string): string {
   return s.replace(/[‐‑   ‘’“”]/g, (c) => FOLD[c]);
 }
 
-// URLs and bare domains, blanked out before looking for the client's name:
-// ChatGPT's inline links ("([yellowbrickprogram.com](https://...))") contain
-// the brand, and the pipeline's own substring check counts those as a
-// mention even when the answer never names the client (17 of 138 stored
-// Yellowbrick mentions, all ChatGPT Live Search, as of 2026-11-13).
-const URL_OR_DOMAIN = /\bhttps?:\/\/[^\s)\]]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s)\]]*)?/gi;
-
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Where the answer names the client (any of `names`), outside URLs and domains. */
-export function mentionPositions(text: string, names: string[]): number[] {
+/**
+ * Where the answer references the client: any of `names` as a whole word
+ * (also inside a link or URL path), or the client's own domain anywhere
+ * ("yellowbrickprogram.com", inside links and URLs too).
+ */
+export function mentionPositions(text: string, names: string[], ownDomain: string | null = null): number[] {
   const cleaned = [...new Set(names.map((n) => fold(n.trim())).filter(Boolean))].sort((a, b) => b.length - a.length);
-  if (!cleaned.length || !text) return [];
-  const masked = fold(text).replace(URL_OR_DOMAIN, (m) => " ".repeat(m.length));
-  const re = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${cleaned.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_])`, "giu");
-  return [...masked.matchAll(re)].map((m) => m.index);
+  if (!text || (!cleaned.length && !ownDomain)) return [];
+  const parts = cleaned.map((n) => `(?<![\\p{L}\\p{N}_])${escapeRegExp(n)}(?![\\p{L}\\p{N}_])`);
+  if (ownDomain) parts.push(escapeRegExp(ownDomain));
+  const re = new RegExp(parts.join("|"), "giu");
+  return [...fold(text).matchAll(re)].map((m) => m.index);
 }
 
 // A top-level list item ("1. ", "2) ", "- ", "* ", "• "); deeper sub-items are
@@ -162,17 +167,21 @@ function introducedBlock(text: string, units: Unit[], i: number): Unit[] {
 }
 
 /**
- * The pages linked to the parts of one answer that name the client, or null
- * when the answer doesn't name them. A mention in a heading or lead-in line
- * with no link of its own takes the links of what it introduces.
+ * The pages behind one answer's mentions of the client, or null when the
+ * answer doesn't mention them. Each place the text references the client is
+ * matched to the links of its unit (a mention in a heading or lead-in line
+ * with no link of its own takes the links of what it introduces); every page
+ * of the client's own site the answer cites is a mention in itself, so it
+ * makes the answer "own" wherever it is.
  */
 export function backingForAnswer(
   answer: BackingAnswer,
   names: string[],
   ownDomain: string | null,
 ): { kind: BackingKind; pages: SpanCitation[] } | null {
-  const positions = mentionPositions(answer.text, names);
-  if (!positions.length) return null;
+  const ownCited = answer.citations.filter((c) => isOwnSite(c.domain, ownDomain));
+  const positions = mentionPositions(answer.text, names, ownDomain);
+  if (!positions.length && !ownCited.length) return null;
   const units = answerUnits(answer.text);
   const linked = answer.citations.map((c) => ({ c, spans: spansOf(c) }));
   const backing = (u: Unit) => linked.filter(({ spans }) => spans.some(([s, e]) => s < u.end && e > u.start)).map(({ c }) => c);
@@ -185,15 +194,16 @@ export function backingForAnswer(
     if (!hits.length && isIntro(answer.text, units[i])) hits = introducedBlock(answer.text, units, i).flatMap(backing);
     for (const c of hits) pages.set(c.url, c);
   }
+  for (const c of ownCited) pages.set(c.url, c);
   const list = [...pages.values()];
-  const kind: BackingKind = list.some((c) => isOwnSite(c.domain, ownDomain)) ? "own" : list.length ? "thirdParty" : "none";
+  const kind: BackingKind = ownCited.length ? "own" : list.length ? "thirdParty" : "none";
   return { kind, pages: list };
 }
 
 export interface BackingCounts {
-  naming: number; // answers that name the client
-  own: number; // ...with at least one of the client's own pages linked to the mention
-  thirdParty: number; // ...with only third-party pages linked
+  mentioning: number; // answers that mention the client (name, domain or own site cited)
+  own: number; // ...that link at least one of the client's own pages
+  thirdParty: number; // ...with only third-party pages linked to the mention
   none: number; // ...with nothing linked to the mention
 }
 
@@ -211,11 +221,9 @@ export interface MentionBackingSummary {
   total: BackingCounts;
   byPlatform: Record<string, BackingCounts>;
   pages: BackingPageRow[]; // pages behind mentions, most answers first
-  // Answers that cite the client's site but never name the client.
-  uncredited: { answers: number; byPlatform: Record<string, number>; topPage: { url: string; title: string | null; answers: number } | null };
 }
 
-const emptyCounts = (): BackingCounts => ({ naming: 0, own: 0, thirdParty: 0, none: 0 });
+const emptyCounts = (): BackingCounts => ({ mentioning: 0, own: 0, thirdParty: 0, none: 0 });
 
 export function summarizeMentionBacking(
   answers: BackingAnswer[],
@@ -225,27 +233,13 @@ export function summarizeMentionBacking(
   const total = emptyCounts();
   const byPlatform: Record<string, BackingCounts> = {};
   const pages = new Map<string, BackingPageRow>();
-  const uncredited = { answers: 0, byPlatform: {} as Record<string, number> };
-  const uncreditedPages = new Map<string, { url: string; title: string | null; answers: number }>();
 
   for (const a of answers) {
     const result = backingForAnswer(a, names, ownDomain);
-    if (!result) {
-      const own = [...new Map(a.citations.filter((c) => isOwnSite(c.domain, ownDomain)).map((c) => [c.url, c])).values()];
-      if (own.length) {
-        uncredited.answers += 1;
-        uncredited.byPlatform[a.platform] = (uncredited.byPlatform[a.platform] ?? 0) + 1;
-        for (const c of own) {
-          const row = uncreditedPages.get(c.url) ?? { url: c.url, title: c.title, answers: 0 };
-          row.answers += 1;
-          uncreditedPages.set(c.url, row);
-        }
-      }
-      continue;
-    }
+    if (!result) continue;
     const p = (byPlatform[a.platform] ??= emptyCounts());
     for (const counts of [total, p]) {
-      counts.naming += 1;
+      counts.mentioning += 1;
       counts[result.kind] += 1;
     }
     for (const c of result.pages) {
@@ -264,12 +258,10 @@ export function summarizeMentionBacking(
     }
   }
 
-  const topUncredited = [...uncreditedPages.values()].sort((x, y) => y.answers - x.answers || x.url.localeCompare(y.url))[0];
   return {
     answers: answers.length,
     total,
     byPlatform,
     pages: [...pages.values()].sort((x, y) => y.answers - x.answers || Number(y.isOwn) - Number(x.isOwn) || x.url.localeCompare(y.url)),
-    uncredited: { ...uncredited, topPage: topUncredited ?? null },
   };
 }
