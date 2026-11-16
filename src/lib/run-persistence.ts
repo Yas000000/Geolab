@@ -55,6 +55,11 @@ export async function findOrCreateClient(
   const existing = await prisma.client.findFirst({
     where: { name: { equals: name, mode: "insensitive" } },
   });
+  // Adding an archived client again restores it, history and all, rather than
+  // running against a client the list hides.
+  if (existing?.archivedAt) {
+    return prisma.client.update({ where: { id: existing.id }, data: { archivedAt: null } });
+  }
   if (existing) return existing;
   return prisma.client.create({
     data: {

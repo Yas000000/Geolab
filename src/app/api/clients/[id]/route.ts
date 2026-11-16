@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunSchedule } from "@/generated/prisma/client";
+import { deleteClient, setArchived } from "@/lib/client-lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,11 +13,19 @@ interface PatchBody {
   schedule?: keyof typeof RunSchedule;
   ga4PropertyId?: string | null;
   gscSiteUrl?: string | null;
+  /** Settings > Archive or Delete: true archives the client, false restores it. Sent on its own. */
+  archived?: boolean;
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
   const { id } = await ctx.params;
   const body = (await request.json()) as PatchBody;
+
+  if (typeof body.archived === "boolean") {
+    const result = await setArchived(id, body.archived);
+    if (!result) return Response.json({ error: "Client not found" }, { status: 404 });
+    return Response.json({ archivedAt: result.archivedAt });
+  }
 
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client) {
@@ -45,4 +54,16 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
   if (analyticsChanged) after(importHistoryForClient(id));
 
   return Response.json({ client: updated, importingHistory: Boolean(analyticsChanged) });
+}
+
+/**
+ * Settings > Archive or Delete: deletes the client and everything under it, for good.
+ * The body must carry { confirmName } matching the client's name (any case).
+ */
+export async function DELETE(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
+  const { id } = await ctx.params;
+  const body = (await request.json().catch(() => ({}))) as { confirmName?: string };
+  const result = await deleteClient(id, body.confirmName ?? "");
+  if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
+  return Response.json({ deleted: result.name });
 }

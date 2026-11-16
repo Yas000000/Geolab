@@ -8,6 +8,7 @@ import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
 import { formatPromptsText } from "@/lib/parse-prompts";
 import { AnalyticsImportButton } from "@/components/analytics-import-button";
+import { ClientLifecyclePanel } from "@/components/client-lifecycle";
 import { CrawlCheckPanel } from "@/components/crawl-check-panel";
 import { CRAWL_CHECK_INTERVAL_DAYS, CRAWL_VENDOR_LABEL, CRAWL_VENDOR_METHOD, latestCrawlCheck, siteUrl } from "@/lib/crawl-check";
 
@@ -52,6 +53,7 @@ async function getClient(id: string) {
       schedule: true,
       ga4PropertyId: true,
       gscSiteUrl: true,
+      archivedAt: true,
       runs: {
         orderBy: { startedAt: "desc" },
         include: {
@@ -143,7 +145,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         </div>
       </section>
 
-      <section>
+      <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Run History
         </h2>
@@ -186,6 +188,21 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             </table>
           </div>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Archive or Delete
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <ClientLifecyclePanel
+            clientId={id}
+            name={client.name}
+            archivedAt={client.archivedAt?.toISOString() ?? null}
+            runCount={client.runs.length}
+            answerCount={client.runs.reduce((n, r) => n + r._count.rawResponses, 0)}
+          />
+        </div>
       </section>
     </div>
   );

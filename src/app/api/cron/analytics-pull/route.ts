@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const clients = await prisma.client.findMany({
-    where: { OR: [{ ga4PropertyId: { not: null } }, { gscSiteUrl: { not: null } }] },
+    where: { archivedAt: null, OR: [{ ga4PropertyId: { not: null } }, { gscSiteUrl: { not: null } }] },
     select: { id: true, ga4PropertyId: true, gscSiteUrl: true },
   });
 

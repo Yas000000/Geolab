@@ -36,7 +36,12 @@ model Client {
   // recurring cadence" independent of ad hoc activity.
   lastScheduledRunAt DateTime?
 
-  brands                  Brand[]
+  // Set when the client is archived (src/lib/client-lifecycle.ts): hidden
+  // from the client list, and skipped by every cron job and paid action
+  // until restored. All its data is kept.
+  archivedAt DateTime?
+
+  brands                Brand[]
   promptSets              PromptSet[]
   runs                    Run[]
   analyticsSnapshots      AnalyticsSnapshot[]

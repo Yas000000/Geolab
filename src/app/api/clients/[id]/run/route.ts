@@ -10,6 +10,7 @@ const REASON_MESSAGE: Record<string, string> = {
   client_not_found: "Client not found.",
   no_domain: "This client has no domain set -- add one in Settings first.",
   no_prompts: "This client has no tracked prompts yet -- add some under Tracked Prompts below.",
+  archived: "This client is archived. Restore it below before running anything new.",
 };
 
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/run">): Promise<Response> {

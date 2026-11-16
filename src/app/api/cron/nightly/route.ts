@@ -21,7 +21,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const clients = await prisma.client.findMany({
-    where: { schedule: { not: "MANUAL" } },
+    where: { schedule: { not: "MANUAL" }, archivedAt: null },
     select: { id: true, schedule: true, lastScheduledRunAt: true },
   });
 

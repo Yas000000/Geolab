@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { latestOutreachPlans, runOutreachStep, startOutreachBuild } from "@/lib/outreach";
+import { archivedReply } from "@/lib/client-lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +28,8 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/clients/[id
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/outreach">): Promise<Response> {
   const { id } = await ctx.params;
+  const archived = await archivedReply(id);
+  if (archived) return archived;
   // Same identity used for every manually triggered action in this app (see /api/clients).
   const started = await startOutreachBuild(id, "william@digitalmarketing.com");
   if (!started.ok) {

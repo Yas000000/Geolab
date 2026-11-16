@@ -24,7 +24,7 @@ function pipelineUrl(): string {
 
 export type RunReusingPromptsResult =
   | { ok: true; runId: string; status: "COMPLETE" }
-  | { ok: false; reason: "already_running" | "no_brand" | "client_not_found" | "no_domain" | "no_prompts" }
+  | { ok: false; reason: "already_running" | "no_brand" | "client_not_found" | "no_domain" | "no_prompts" | "archived" }
   | { ok: false; reason: "pipeline_failed"; runId: string; error?: string };
 
 /**
@@ -45,13 +45,17 @@ export type RunReusingPromptsResult =
 // this exact scenario, 2026-10-12, left stuck at RUNNING with 0 persisted
 // responses, requiring a manual DB fix to unblock future runs). Self-heal
 // instead of requiring that every time.
-const STALE_RUN_MS = 15 * 60 * 1000;
+export const STALE_RUN_MS = 15 * 60 * 1000;
 
 async function runClientReusingPrompts(
   clientId: string,
   triggeredBy: string,
   liveSearch: boolean,
 ): Promise<RunReusingPromptsResult> {
+  // An archived client never runs, whether from Run Now or a job queued before it was archived.
+  const archived = await prisma.client.findUnique({ where: { id: clientId }, select: { archivedAt: true } });
+  if (archived?.archivedAt) return { ok: false, reason: "archived" };
+
   const inProgress = await prisma.run.findFirst({
     where: { clientId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
   });

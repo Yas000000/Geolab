@@ -81,7 +81,7 @@ export async function runCrawlCheck(clientId: string, triggeredBy: string, reque
 export async function clientsDueForCrawlCheck(now = new Date()): Promise<string[]> {
   const cutoff = new Date(now.getTime() - CRAWL_CHECK_INTERVAL_DAYS * 24 * 60 * 60 * 1000);
   const clients = await prisma.client.findMany({
-    where: { schedule: { not: "MANUAL" }, domain: { not: null } },
+    where: { schedule: { not: "MANUAL" }, domain: { not: null }, archivedAt: null },
     select: { id: true, crawlChecks: { orderBy: { checkedAt: "desc" }, take: 1, select: { checkedAt: true } } },
   });
   return clients.filter((c) => !c.crawlChecks[0] || c.crawlChecks[0].checkedAt < cutoff).map((c) => c.id);

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
+import { LocalDay, RestoreButton } from "@/components/client-lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,11 @@ async function getClients() {
 }
 
 export default async function ClientsPage() {
-  const clients = await getClients();
+  const all = await getClients();
+  const clients = all.filter((c) => !c.archivedAt);
+  const archived = all
+    .filter((c) => c.archivedAt)
+    .sort((a, b) => (b.archivedAt?.getTime() ?? 0) - (a.archivedAt?.getTime() ?? 0));
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
@@ -45,7 +50,9 @@ export default async function ClientsPage() {
 
         {clients.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            No clients yet — run the pipeline for a brand and it&apos;ll show up here.
+            {archived.length > 0
+              ? "No active clients. Archived clients are listed below."
+              : "No clients yet — run the pipeline for a brand and it'll show up here."}
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -105,6 +112,41 @@ export default async function ClientsPage() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {archived.length > 0 && (
+          <details className="group mt-8">
+            <summary className="cursor-pointer select-none text-sm font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
+              Archived clients ({archived.length})
+            </summary>
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Archived clients keep all their data but don&apos;t run on a schedule. Open one to view its history, or
+              restore it here.
+            </p>
+            <ul className="mt-3 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">
+              {archived.map((client) => (
+                <li
+                  key={client.id}
+                  className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-3 text-sm dark:bg-zinc-950"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/clients/${client.id}/rankings`}
+                      className="font-medium text-zinc-700 hover:underline dark:text-zinc-300"
+                    >
+                      {client.name}
+                    </Link>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {client.domain ? `${client.domain} · ` : ""}
+                      {client._count.runs} run{client._count.runs === 1 ? "" : "s"} · archived{" "}
+                      <LocalDay iso={client.archivedAt!.toISOString()} />
+                    </div>
+                  </div>
+                  <RestoreButton clientId={client.id} small />
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </div>
     </div>

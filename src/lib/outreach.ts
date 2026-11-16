@@ -33,7 +33,7 @@ const LAUNCH_BUDGET_MS = 6 * 60_000;
 /** The plan step needs a few minutes of its own; later than this it moves to a fresh invocation. */
 const PLAN_START_LIMIT_MS = 7 * 60_000;
 /** A RUNNING build with no progress for this long was cut off (the function's time limit). */
-const STALE_MINUTES = 20;
+export const STALE_MINUTES = 20;
 const LIVE_SEARCH_TAG = "live search";
 
 // Research and the plan step each run up to a few minutes inside the Python function, so
