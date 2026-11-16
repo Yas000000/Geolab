@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
 import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ export const dynamic = "force-dynamic";
  * picks this set up via getTrackedPromptSet().
  */
 export async function PUT(request: Request, ctx: RouteContext<"/api/clients/[id]/prompts">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => ({}))) as { text?: string };
 

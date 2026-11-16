@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunSchedule } from "@/generated/prisma/client";
 import { deleteClient, setArchived } from "@/lib/client-lifecycle";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ interface PatchBody {
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json()) as PatchBody;
 
@@ -61,6 +64,8 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
  * The body must carry { confirmName } matching the client's name (any case).
  */
 export async function DELETE(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => ({}))) as { confirmName?: string };
   const result = await deleteClient(id, body.confirmName ?? "");

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
+import { requireTeamPage } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ function relativeTime(date: Date): string {
 }
 
 export default async function SettingsPage() {
+  await requireTeamPage();
   const connection = await prisma.googleOAuthConnection.findUnique({ where: { id: GOOGLE_CONNECTION_ID } });
 
   const stale = connection?.lastVerifiedAt

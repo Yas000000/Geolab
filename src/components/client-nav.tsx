@@ -19,8 +19,10 @@ const NAV_ITEMS = [
 // on Rankings and switching to Traffic (or back) doesn't reset to All Time.
 const CARRIED_PARAMS = ["start", "end", "preset", "n", "compare", "compareStart", "compareEnd"];
 
-export function ClientNav({ clientId }: { clientId: string }) {
+/** `tabs`: the tab segments a client login may open; null for a team login, which sees them all. */
+export function ClientNav({ clientId, tabs }: { clientId: string; tabs: readonly string[] | null }) {
   const pathname = usePathname();
+  const items = tabs ? NAV_ITEMS.filter((item) => tabs.includes(item.segment)) : NAV_ITEMS;
   const searchParams = useSearchParams();
 
   const carried = new URLSearchParams();
@@ -46,7 +48,7 @@ export function ClientNav({ clientId }: { clientId: string }) {
       aria-label="Client sections"
       className="relative -mx-4 flex gap-1 overflow-x-auto px-4 sm:-mx-6 sm:px-6 md:mx-0 md:block md:w-44 md:shrink-0 md:space-y-1 md:overflow-visible md:px-0"
     >
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const href = `/clients/${clientId}/${item.segment}${qs ? `?${qs}` : ""}`;
         const active = pathname === `/clients/${clientId}/${item.segment}` || pathname.startsWith(`/clients/${clientId}/${item.segment}/`);
         return (

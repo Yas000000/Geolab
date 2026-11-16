@@ -4,6 +4,7 @@ import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-pl
 import { resolveBrandNames } from "@/lib/brand-resolution";
 import { isOwnSite, siteDomain } from "@/lib/citations";
 import { Agent, fetch as undiciFetch } from "undici";
+import { internalHeaders } from "@/lib/internal-key";
 
 // The Python pipeline replies only once the whole run is done, so no
 // response headers arrive until then. Node's built-in fetch gives up after
@@ -103,7 +104,7 @@ export async function callPipelineAndPersist(params: {
   try {
     const res = await undiciFetch(pipelineUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...internalHeaders() },
       body: JSON.stringify(pipelineBody),
       dispatcher: pipelineAgent,
     });

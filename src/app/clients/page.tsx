@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { LocalDay, RestoreButton } from "@/components/client-lifecycle";
+import { requireTeamPage } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ async function getClients() {
 }
 
 export default async function ClientsPage() {
+  await requireTeamPage();
   const all = await getClients();
   const clients = all.filter((c) => !c.archivedAt);
   const archived = all

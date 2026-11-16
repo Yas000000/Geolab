@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { runOutreachStep } from "@/lib/outreach";
+import { isInternalCall } from "@/lib/internal-key";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,8 @@ export const maxDuration = 800;
  * continues a build someone started from the tab; for any other plan it does nothing.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/outreach/step">): Promise<Response> {
+  // Only the build itself calls this (src/lib/outreach.ts), with the internal key.
+  if (!isInternalCall(request)) return Response.json({ error: "Not allowed." }, { status: 403 });
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => ({}))) as { planId?: string };
   if (!body.planId) return Response.json({ error: "planId required." }, { status: 400 });

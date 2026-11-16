@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,8 @@ export async function DELETE(
   _request: Request,
   ctx: RouteContext<"/api/clients/[id]/brands/[brandId]">,
 ): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id, brandId } = await ctx.params;
 
   const brand = await prisma.brand.findUnique({ where: { id: brandId } });

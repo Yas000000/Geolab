@@ -1,4 +1,5 @@
 import { importHistoryForClient } from "@/lib/analytics-sync";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,8 @@ const REASON: Record<string, { message: string; status: number }> = {
 
 /** Imports all available GA4/AI-traffic history and Search Console's last ~16 months for one client. */
 export async function POST(_request: Request, ctx: RouteContext<"/api/clients/[id]/analytics-import">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const result = await importHistoryForClient(id);
   if (result.ok) return Response.json(result);

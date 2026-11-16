@@ -1,5 +1,6 @@
 import { runCrawlCheck } from "@/lib/crawl-check";
 import { archivedReply } from "@/lib/client-lifecycle";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,11 +14,13 @@ const REASON: Record<string, { message: string; status: number }> = {
 
 /** Settings page "Check now": runs the AI crawler access check for one client and stores it. */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/crawl-check">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const archived = await archivedReply(id);
   if (archived) return archived;
-  // Same identity used for every manually triggered action in this app (see /api/clients).
-  const result = await runCrawlCheck(id, "william@digitalmarketing.com", request);
+  // Recorded as who started it: the signed-in team member.
+  const result = await runCrawlCheck(id, viewer.email, request);
   if (result.ok) return Response.json(result);
   const r = REASON[result.reason];
   return Response.json({ error: r.message, detail: result.error }, { status: r.status });

@@ -13,6 +13,7 @@ import {
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
 import { isLiveSearchModel } from "@/lib/citations";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -541,6 +542,7 @@ export default async function ClientRankingsPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
+  await requireTab(id, "rankings");
   const sp = await searchParams;
   const model = sp.model;
   const platformFilter = typeof model === "string" && model ? model : undefined;

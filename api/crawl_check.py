@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from python_pipeline.crawlability import run_all_checks
+from python_pipeline.internal_key import require_internal_key
 
 app = FastAPI()
+require_internal_key(app)  # only the portal itself may call this
 
 
 class CrawlCheckRequest(BaseModel):

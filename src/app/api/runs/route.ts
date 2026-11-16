@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { RunStatus } from "@/generated/prisma/client";
 import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@/lib/run-persistence";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ function pipelineUrl(request: Request): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const body = (await request.json()) as RunsRequestBody;
   const { clientName, domain, services } = body;
   const brandName = body.brandName ?? clientName;
@@ -43,7 +46,7 @@ export async function POST(request: Request): Promise<Response> {
       clientId: client.id,
       promptSetId: promptSet.id,
       status: RunStatus.PENDING,
-      triggeredBy: "william@digitalmarketing.com",
+      triggeredBy: viewer.email,
     },
   });
 

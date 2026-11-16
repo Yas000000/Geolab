@@ -6,6 +6,7 @@ import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 import { citationTrackedRuns, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { summarizeMentionBacking, type BackingCounts } from "@/lib/mention-backing";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +121,7 @@ export default async function ClientCitationsPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
+  const viewer = await requireTab(id, "citations");
   const sp = await searchParams;
   const platformFilter = typeof sp.model === "string" && sp.model ? sp.model : undefined;
 
@@ -231,11 +233,17 @@ export default async function ClientCitationsPage({
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
           No Live Search answers with citations in this range{platformFilter ? " for this platform" : ""}. Citations
           only come from Live Search, since Training Search answers from the AI&apos;s memory and cites nothing, and
-          Live Search runs from before November 6, 2026 didn&apos;t save them. Run a Live Search from{" "}
-          <a href={`/clients/${id}/settings`} className="underline">
-            Settings
-          </a>
-          .
+          Live Search runs from before November 6, 2026 didn&apos;t save them.
+          {viewer.role === "TEAM" && (
+            <>
+              {" "}
+              Run a Live Search from{" "}
+              <a href={`/clients/${id}/settings`} className="underline">
+                Settings
+              </a>
+              .
+            </>
+          )}
         </div>
       ) : (
         <>
@@ -383,11 +391,18 @@ export default async function ClientCitationsPage({
             ) : spanRuns.length === 0 ? (
               <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
                 No Live Search crawl in this range saved which source backs each part of an answer. That started in
-                mid-November 2026; run a Live Search from{" "}
-                <a href={`/clients/${id}/settings`} className="underline">
-                  Settings
-                </a>{" "}
-                to see it.
+                mid-November 2026
+                {viewer.role === "TEAM" ? (
+                  <>
+                    ; run a Live Search from{" "}
+                    <a href={`/clients/${id}/settings`} className="underline">
+                      Settings
+                    </a>{" "}
+                    to see it.
+                  </>
+                ) : (
+                  "."
+                )}
               </div>
             ) : (
               <>

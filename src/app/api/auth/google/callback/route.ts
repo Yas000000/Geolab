@@ -1,10 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { newOAuthClient, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const code = new URL(request.url).searchParams.get("code");
   if (!code) {
     return new Response("Missing authorization code", { status: 400 });

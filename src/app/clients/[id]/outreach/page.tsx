@@ -6,6 +6,7 @@ import { OutreachRecheckPanel } from "@/components/outreach-recheck-panel";
 import { siteDomain } from "@/lib/citations";
 import { CATEGORY_LABEL } from "@/lib/geo-platform-map";
 import { COST_PAGE_CHECKS, COST_PER_PROMPT, COST_PER_SITE, latestOutreachPlans, outreachOverview } from "@/lib/outreach";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -202,7 +203,7 @@ function where(p: PageCheck): string {
   return "";
 }
 
-function SiteCard({ s, num, brand, total }: { s: Site; num: number; brand: string; total: number }) {
+function SiteCard({ s, num, brand, total, isTeam }: { s: Site; num: number; brand: string; total: number; isTeam: boolean }) {
   const r = s.research;
   const L = s.listing;
   const top = s.page_check;
@@ -274,7 +275,7 @@ function SiteCard({ s, num, brand, total }: { s: Site; num: number; brand: strin
             )}
           </span>
         </div>
-        <ChromeNote pages={s.pages} />
+        {isTeam && <ChromeNote pages={s.pages} />}
         {L.listed.length > 0 && L.total > 1 && (
           <ul className="ml-4 list-disc space-y-1">
             {L.listed.slice(0, 8).map((p) => (
@@ -362,6 +363,8 @@ function SiteCard({ s, num, brand, total }: { s: Site; num: number; brand: strin
 
 export default async function OutreachPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const viewer = await requireTab(id, "outreach");
+  const isTeam = viewer.role === "TEAM";
   const client = await prisma.client.findUnique({ where: { id }, select: { id: true, name: true, domain: true } });
   if (!client) notFound();
 
@@ -413,6 +416,19 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
         {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
       </header>
 
+      {/* A client login sees when the plan was built, but no build costs or buttons. */}
+      {!isTeam && (
+        <section className="mb-8 rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <h2 className={sectionTitle}>Outreach Plan</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {complete
+              ? `Updated ${crawlDay(complete.createdAt)} from the ${crawlDay(new Date(plan!.crawlDate))} crawl.`
+              : "Your outreach plan isn't ready yet."}
+          </p>
+        </section>
+      )}
+
+      {isTeam && (
       <section className="mb-8 rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
         <h2 className={sectionTitle}>Outreach Plan</h2>
         <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
@@ -460,6 +476,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
           />
         )}
       </section>
+      )}
 
       {plan && (
         <>
@@ -729,7 +746,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
               <h2 className={sectionTitle}>Outreach Plan by Site</h2>
               <div className="mt-2 space-y-4">
                 {targets.map(({ num, site }) => (
-                  <SiteCard key={site!.domain} s={site!} num={num} brand={brand} total={total} />
+                  <SiteCard key={site!.domain} s={site!} num={num} brand={brand} total={total} isTeam={isTeam} />
                 ))}
               </div>
             </section>

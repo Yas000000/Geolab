@@ -12,8 +12,10 @@ from python_pipeline.outreach import (
     research_site,
     site_stats,
 )
+from python_pipeline.internal_key import require_internal_key
 
 app = FastAPI()
+require_internal_key(app)  # only the portal itself may call this
 
 # Stateless, like run_pipeline and crawl_check: src/lib/outreach.ts sends the crawl's answers
 # and the client's saved research, orchestrates a build and stores everything. Only the

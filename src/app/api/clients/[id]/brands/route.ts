@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { findOrCreateBrand } from "@/lib/run-persistence";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,8 @@ interface PostBody {
 }
 
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/brands">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json()) as PostBody;
   const name = body.name?.trim();

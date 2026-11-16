@@ -1,5 +1,6 @@
 import { generateMonthlyReport, isValidMonth } from "@/lib/monthly-report";
 import { archivedReply } from "@/lib/client-lifecycle";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,8 @@ export const maxDuration = 300; // DB reads plus ~6 parallel Key Takeaway calls,
 
 /** Generates (or regenerates) one client's monthly report for { month: "YYYY-MM" }. */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/reports">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const archived = await archivedReply(id);
   if (archived) return archived;

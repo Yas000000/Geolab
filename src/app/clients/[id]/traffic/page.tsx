@@ -4,6 +4,7 @@ import { DateRangePicker } from "@/components/date-range-picker";
 import { SessionCountSparkline, type SessionCountPoint } from "@/components/session-count-sparkline";
 import { geoAllTimeRange, parseISODate, type DateRange } from "@/lib/date-range";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,7 @@ export default async function ClientTrafficPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
+  const viewer = await requireTab(id, "traffic");
   const sp = await searchParams;
   const startParam = typeof sp.start === "string" ? sp.start : undefined;
   const endParam = typeof sp.end === "string" ? sp.end : undefined;
@@ -151,11 +153,17 @@ export default async function ClientTrafficPage({
 
       {ga4InRange.length === 0 && gscInRange.length === 0 && aiInRange.length === 0 ? (
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-          No analytics data in this range yet — connect a Google account in{" "}
-          <a href={`/clients/${id}/settings`} className="underline">
-            Settings
-          </a>{" "}
-          and the daily pull will populate this.
+          {viewer.role === "TEAM" ? (
+            <>
+              No analytics data in this range yet — connect a Google account in{" "}
+              <a href={`/clients/${id}/settings`} className="underline">
+                Settings
+              </a>{" "}
+              and the daily pull will populate this.
+            </>
+          ) : (
+            "No analytics data in this range yet."
+          )}
         </div>
       ) : (
         <>

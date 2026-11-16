@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { GenerateReportForm } from "@/components/generate-report-form";
 import { lastCompleteMonth, monthLabel, monthsWithRuns } from "@/lib/monthly-report";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClientReportsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const viewer = await requireTab(id, "reports");
   const client = await prisma.client.findUnique({
     where: { id },
     select: {
@@ -19,8 +21,10 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
   if (!client) notFound();
 
   // Offer every month with GEO runs, plus the last full month even if it has none yet.
+  // (Team only: a client login sees the saved reports, not the Generate form.)
+  const isTeam = viewer.role === "TEAM";
   const defaultMonth = lastCompleteMonth();
-  const months = [...new Set([defaultMonth, ...(await monthsWithRuns(id))])].sort().reverse();
+  const months = isTeam ? [...new Set([defaultMonth, ...(await monthsWithRuns(id))])].sort().reverse() : [];
 
   return (
     <div>
@@ -29,6 +33,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
         {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
       </header>
 
+      {isTeam && (
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Monthly Report
@@ -42,6 +47,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
           />
         </div>
       </section>
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">

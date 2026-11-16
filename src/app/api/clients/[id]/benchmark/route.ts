@@ -1,10 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { importBenchmarkSnapshot, type BenchmarkImportPayload } from "@/lib/benchmark-import";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/benchmark">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json()) as BenchmarkImportPayload;
 

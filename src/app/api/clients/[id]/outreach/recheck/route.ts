@@ -1,4 +1,5 @@
 import { applyRecheck } from "@/lib/outreach";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,8 @@ const REASON: Record<string, { message: string; status: number }> = {
  * the user's PC ({ checks: { site: { url: check } } }), saved into the client's latest plan.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/outreach/recheck">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => null)) as { checks?: unknown } | null;
   if (!body?.checks || typeof body.checks !== "object") {

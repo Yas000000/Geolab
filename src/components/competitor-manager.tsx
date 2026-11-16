@@ -8,12 +8,15 @@ export interface CompetitorRow {
   domain: string | null;
 }
 
+/** `readOnly` (client logins): the list only, with no add form or Remove buttons. */
 export function CompetitorManager({
   clientId,
   initialCompetitors,
+  readOnly = false,
 }: {
   clientId: string;
   initialCompetitors: CompetitorRow[];
+  readOnly?: boolean;
 }) {
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
@@ -77,8 +80,9 @@ export function CompetitorManager({
 
       {initialCompetitors.length === 0 ? (
         <div className="mb-4 rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-          No competitors tracked yet — they&apos;re detected automatically from run results, or add one manually
-          below.
+          {readOnly
+            ? "No competitors tracked yet."
+            : "No competitors tracked yet — they're detected automatically from run results, or add one manually below."}
         </div>
       ) : (
         <div className="mb-4 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -87,7 +91,7 @@ export function CompetitorManager({
               <tr>
                 <th className="px-4 py-2 font-medium">Name</th>
                 <th className="px-4 py-2 font-medium">Domain</th>
-                <th className="px-4 py-2 font-medium" />
+                {!readOnly && <th className="px-4 py-2 font-medium" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -95,6 +99,7 @@ export function CompetitorManager({
                 <tr key={c.id} className="bg-white dark:bg-zinc-950">
                   <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">{c.name}</td>
                   <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">{c.domain || "—"}</td>
+                  {!readOnly && (
                   <td className="px-4 py-3 text-right">
                     <button
                       type="button"
@@ -105,6 +110,7 @@ export function CompetitorManager({
                       {deletingId === c.id ? "Removing…" : "Remove"}
                     </button>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -112,6 +118,7 @@ export function CompetitorManager({
         </div>
       )}
 
+      {!readOnly && (
       <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Name</label>
@@ -142,6 +149,7 @@ export function CompetitorManager({
           {submitting ? "Adding…" : "+ Add Competitor"}
         </button>
       </form>
+      )}
     </div>
   );
 }

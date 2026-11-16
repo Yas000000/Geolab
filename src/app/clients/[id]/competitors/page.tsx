@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { CompetitorManager } from "@/components/competitor-manager";
+import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ async function getClient(id: string) {
 
 export default async function ClientCompetitorsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const viewer = await requireTab(id, "competitors");
   const client = await getClient(id);
   if (!client) notFound();
 
@@ -50,12 +52,15 @@ export default async function ClientCompetitorsPage({ params }: { params: Promis
           <a href={`/clients/${id}/rankings`} className="underline">
             GEO Rankings
           </a>
-          . Competitors are also detected automatically from run results — add one here only if it should be
-          tracked even before it shows up in a response.
+          .{" "}
+          {viewer.role === "TEAM"
+            ? "Competitors are also detected automatically from run results — add one here only if it should be tracked even before it shows up in a response."
+            : "Competitors are picked up automatically from the brands AI answers name alongside yours."}
         </p>
         <CompetitorManager
           clientId={id}
           initialCompetitors={competitors.map((c) => ({ id: c.id, name: c.name, domain: c.domain }))}
+          readOnly={viewer.role !== "TEAM"}
         />
       </section>
     </div>

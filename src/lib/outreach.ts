@@ -1,6 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import { prisma } from "@/lib/prisma";
 import { siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
+import { internalHeaders } from "@/lib/internal-key";
 
 // The Outreach Plan tab (python_pipeline/outreach.py does the research and scoring).
 // A build costs real money, mostly site research with web search, so it only ever runs
@@ -89,7 +90,7 @@ function outreachPythonUrl(origin: string): string {
 async function py<T>(origin: string, body: Record<string, unknown>): Promise<T> {
   const res = await undiciFetch(outreachPythonUrl(origin), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...internalHeaders() },
     body: JSON.stringify(body),
     dispatcher: pythonAgent,
   });
@@ -275,7 +276,7 @@ async function pool<T>(items: T[], size: number, work: (item: T) => Promise<void
 async function continueInNewInvocation(planId: string, clientId: string, origin: string) {
   const res = await fetch(`${origin}/api/clients/${clientId}/outreach/step`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...internalHeaders() },
     body: JSON.stringify({ planId }),
   });
   if (!res.ok) throw new Error(`Couldn't continue the build (step route returned ${res.status}).`);

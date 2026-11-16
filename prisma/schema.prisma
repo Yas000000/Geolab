@@ -52,6 +52,51 @@ model Client {
   monthlyReports          MonthlyReport[]
   outreachPlans           OutreachPlan[]
   outreachSites           OutreachSite[]
+  login                   User?
+}
+
+// --- Logins (src/lib/auth.ts, src/proxy.ts) ---------------------------------
+// TEAM logins see and do everything. A CLIENT login is the one shared login a
+// client gets: it sees only that client's tabs listed in allowedTabs, never
+// Settings, and can't trigger anything.
+
+enum UserRole {
+  TEAM
+  CLIENT
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique // stored lowercased
+  name               String?
+  role               UserRole
+  passwordHash       String
+  // A generated password must be replaced at the next sign-in (team logins).
+  mustChangePassword Boolean   @default(false)
+  // CLIENT logins only: the client it belongs to (one login per client) and
+  // the tab segments it may open (see CLIENT_TABS in src/lib/auth.ts).
+  clientId           String?   @unique
+  client             Client?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  allowedTabs        String[]  @default([])
+  disabledAt         DateTime?
+  failedLogins       Int       @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sessions Session[]
+}
+
+model Session {
+  // sha256 of the random token in the browser's cookie; the token itself is never stored.
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 enum OutreachStatus {

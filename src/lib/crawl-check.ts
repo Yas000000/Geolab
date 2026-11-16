@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { internalHeaders } from "@/lib/internal-key";
 
 export interface CrawlVendorResult {
   vendor: "claude" | "gemini" | "chatgpt";
@@ -60,7 +61,7 @@ export async function runCrawlCheck(clientId: string, triggeredBy: string, reque
   try {
     const res = await fetch(crawlCheckUrl(request), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...internalHeaders() },
       body: JSON.stringify({ url, brand: client.brands[0]?.name ?? null }),
     });
     if (!res.ok) throw new Error(`crawl_check returned ${res.status}: ${await res.text()}`);

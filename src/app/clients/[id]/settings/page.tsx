@@ -11,6 +11,8 @@ import { AnalyticsImportButton } from "@/components/analytics-import-button";
 import { ClientLifecyclePanel } from "@/components/client-lifecycle";
 import { CrawlCheckPanel } from "@/components/crawl-check-panel";
 import { CRAWL_CHECK_INTERVAL_DAYS, CRAWL_VENDOR_LABEL, CRAWL_VENDOR_METHOD, latestCrawlCheck, siteUrl } from "@/lib/crawl-check";
+import { requireTab } from "@/lib/viewer";
+import { CLIENT_TABS, cleanTabs } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +56,7 @@ async function getClient(id: string) {
       ga4PropertyId: true,
       gscSiteUrl: true,
       archivedAt: true,
+      login: { select: { email: true, allowedTabs: true, disabledAt: true } },
       runs: {
         orderBy: { startedAt: "desc" },
         include: {
@@ -67,6 +70,7 @@ async function getClient(id: string) {
 
 export default async function ClientSettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  await requireTab(id, "settings");
   const client = await getClient(id);
   if (!client) notFound();
   const trackedPromptSet = await getTrackedPromptSet(id);
@@ -188,6 +192,36 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             </table>
           </div>
         )}
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Client Login
+        </h2>
+        <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-950">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {client.login ? (
+              <>
+                {client.name} signs in as <strong className="text-zinc-900 dark:text-zinc-100">{client.login.email}</strong>
+                {client.login.disabledAt ? " (turned off)" : ""} and sees{" "}
+                {cleanTabs(client.login.allowedTabs).length
+                  ? cleanTabs(client.login.allowedTabs)
+                      .map((t) => CLIENT_TABS.find((c) => c.segment === t)?.label)
+                      .join(", ")
+                  : "no tabs yet"}
+                .
+              </>
+            ) : (
+              `${client.name} has no login yet. Set one up to let them see their own reports in the portal.`
+            )}
+          </p>
+          <Link
+            href={`/access/clients/${id}`}
+            className="inline-flex shrink-0 items-center self-start rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 sm:self-auto dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            {client.login ? "Manage access" : "Set up access"}
+          </Link>
+        </div>
       </section>
 
       <section>

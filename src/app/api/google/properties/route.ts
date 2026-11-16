@@ -1,10 +1,13 @@
 import { getGoogleOAuthClient } from "@/lib/google-oauth";
 import { listGa4Properties, listGscSites } from "@/lib/google-properties";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const client = await getGoogleOAuthClient();
   if (!client) {
     return Response.json({ connected: false, ga4: [], gsc: [] });

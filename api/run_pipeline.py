@@ -8,8 +8,10 @@ from python_pipeline.geo_prompt_engine import CATEGORY_LABELS, GeoPromptEngine
 from python_pipeline.platforms import PLATFORMS, PLATFORMS_LIVE, PlatformResult
 from python_pipeline.parser import analyze, normalize_text
 from python_pipeline.brand_extractor import extract_brands
+from python_pipeline.internal_key import require_internal_key
 
 app = FastAPI()
+require_internal_key(app)  # only the portal itself may call this
 
 DEFAULT_PLATFORMS = ["openai", "claude", "gemini"]
 # Perplexity always searches the web, so it has no Training Search mode and

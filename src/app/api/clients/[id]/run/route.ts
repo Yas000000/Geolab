@@ -1,4 +1,5 @@
 import { runClientNow } from "@/lib/scheduled-run";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,12 +15,13 @@ const REASON_MESSAGE: Record<string, string> = {
 };
 
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/run">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const body = (await request.json().catch(() => ({}))) as { liveSearch?: boolean };
 
-  // "william@digitalmarketing.com" matches the identity used elsewhere in
-  // this app for manually-triggered runs (see /api/clients, /api/runs).
-  const result = await runClientNow(id, "william@digitalmarketing.com", body.liveSearch === true);
+  // Recorded as who started it: the signed-in team member.
+  const result = await runClientNow(id, viewer.email, body.liveSearch === true);
 
   if (result.ok) {
     return Response.json({ runId: result.runId, status: "COMPLETE" });

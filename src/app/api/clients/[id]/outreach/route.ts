@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { latestOutreachPlans, runOutreachStep, startOutreachBuild } from "@/lib/outreach";
 import { archivedReply } from "@/lib/client-lifecycle";
+import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ const REASON: Record<string, { message: string; status: number }> = {
 
 /** The latest build's status, for the Outreach Plan tab to poll while one runs. */
 export async function GET(_request: Request, ctx: RouteContext<"/api/clients/[id]/outreach">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const { latest } = await latestOutreachPlans(id);
   return Response.json(latest ?? null);
@@ -27,11 +30,13 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/clients/[id
  * Only ever called from that button, after the cost was shown and confirmed.
  */
 export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id]/outreach">): Promise<Response> {
+  const viewer = await requireTeam();
+  if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
   const archived = await archivedReply(id);
   if (archived) return archived;
-  // Same identity used for every manually triggered action in this app (see /api/clients).
-  const started = await startOutreachBuild(id, "william@digitalmarketing.com");
+  // Recorded as who started it: the signed-in team member.
+  const started = await startOutreachBuild(id, viewer.email);
   if (!started.ok) {
     const r = REASON[started.reason];
     return Response.json({ error: r.message }, { status: r.status });

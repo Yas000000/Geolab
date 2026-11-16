@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
+import { requireTeamPage } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -150,6 +151,7 @@ export default async function RunPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireTeamPage();
   const { id } = await params;
   const run = await getRun(id);
   if (!run) notFound();
