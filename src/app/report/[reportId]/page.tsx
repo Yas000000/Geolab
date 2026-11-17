@@ -380,7 +380,12 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
           <SectionHeader n={++n} title="Prompt Movement" sub={`Where ${brand} gained ground across the ${d.prompts.tracked} tracked prompts, and where a competitor still leads.`} />
           {[
             { title: "New Wins", note: `Not mentioned ${then}, mentioned now.`, rows: d.prompts.newWins, watch: false },
-            { title: "Rank Gains", note: `Mentioned ${then} and now, with a better best rank now.`, rows: d.prompts.rankGains, watch: false },
+            {
+              title: "Rank Gains",
+              note: `A better best rank now than ${then}, including prompts that went from not found to ranked.`,
+              rows: d.prompts.rankGains,
+              watch: false,
+            },
             { title: "Watchlist", note: "Mentioned, but another brand holds the #1 spot.", rows: d.prompts.watchlist, watch: true },
           ].map((b) => (
             <div key={b.title} className="mb-5">

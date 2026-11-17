@@ -127,7 +127,14 @@ export interface MonthlyReportData {
   runs: { current: RunCounts; previous: RunCounts | null };
   scorecard: { current: ScoreMetrics; previous: CompareScore | null };
   platforms: PlatformRow[];
-  prompts: { tracked: number; compared: boolean; newWins: PromptMove[]; rankGains: PromptMove[]; watchlist: PromptMove[] };
+  prompts: {
+    tracked: number;
+    compared: boolean;
+    gainsIncludeNewWins?: boolean; // reports saved before this rule get it on open (normalizeReportData)
+    newWins: PromptMove[];
+    rankGains: PromptMove[]; // includes every new win: unranked then, ranked now
+    watchlist: PromptMove[];
+  };
   competitors: CompetitorRow[];
   citations: CitationSection | null;
   traffic: { current: TrafficTotals; previous: TrafficTotals | null } | null;
@@ -169,7 +176,11 @@ export function normalizeReportData(raw: unknown): MonthlyReportData {
         }
       : x,
   );
-  return zeroFillBenchmark({ ...d, competitors });
+  // Reports saved before new wins counted as rank gains too.
+  const prompts = d.prompts.gainsIncludeNewWins
+    ? d.prompts
+    : { ...d.prompts, gainsIncludeNewWins: true, rankGains: [...d.prompts.newWins, ...d.prompts.rankGains].sort(byBestRank) };
+  return zeroFillBenchmark({ ...d, competitors, prompts });
 }
 
 function fromMonthReport(raw: LegacyReport): MonthlyReportData {
@@ -330,21 +341,28 @@ function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
     const previousBestRank = p?.bestRank ?? null;
     const move = { text: a.text, previouslyTracked: !!p, previousBestRank, currentBestRank };
     // A prompt that isn't in the comparison is new to tracking, not a win.
-    if (p && !p.found && found(a.checks)) newWins.push(move);
-    else if (p && p.found && currentBestRank != null && previousBestRank != null && currentBestRank < previousBestRank)
+    // Unranked then and ranked now is a rank gain too (the user's rule,
+    // 2026-11-17), so every new win is also listed under Rank Gains.
+    if (p && !p.found && found(a.checks)) {
+      newWins.push(move);
+      rankGains.push(move);
+    } else if (p && p.found && currentBestRank != null && previousBestRank != null && currentBestRank < previousBestRank)
       rankGains.push(move);
     else if (found(a.checks) && currentBestRank != null && currentBestRank > 1)
       watchlist.push({ ...move, outrankedBy: leader(a.checks) });
   }
-  const byRank = (x: PromptMove, y: PromptMove) => (x.currentBestRank ?? 99) - (y.currentBestRank ?? 99) || x.text.localeCompare(y.text);
   return {
     tracked: cur.size,
     compared: !!then && then.size > 0,
-    newWins: newWins.sort(byRank),
-    rankGains: rankGains.sort(byRank),
-    watchlist: watchlist.sort(byRank),
+    gainsIncludeNewWins: true,
+    newWins: newWins.sort(byBestRank),
+    rankGains: rankGains.sort(byBestRank),
+    watchlist: watchlist.sort(byBestRank),
   };
 }
+
+const byBestRank = (x: PromptMove, y: PromptMove) =>
+  (x.currentBestRank ?? 99) - (y.currentBestRank ?? 99) || x.text.localeCompare(y.text);
 
 /** Competitor rows shown in the report: the Rankings tab's top brands, plus the client. */
 export const COMPETITOR_ROWS = 15;
@@ -865,7 +883,7 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     [
       "prompts",
       d.prompts.compared
-        ? `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${period}${what}\nPrompts tracked: ${d.prompts.tracked}\nBucket counts: ${JSON.stringify({ new_wins: d.prompts.newWins.length, rank_gains: d.prompts.rankGains.length, other_prompts_led_by_a_competitor: d.prompts.watchlist.length })}\nNew wins (examples): ${JSON.stringify(d.prompts.newWins.slice(0, 5).map((m) => m.text))}\n\nField meanings: "found" means an AI answer mentioned the brand. new_wins = prompts where the brand was not found in the comparison and is found now. rank_gains = prompts where the brand was found in both and its best rank improved. other_prompts_led_by_a_competitor = further prompts, not counted in new_wins or rank_gains, where the brand is found but a competitor holds the #1 spot. Never describe those as a subset of the new wins.\n\nWrite the Key Takeaway sentence now, summarizing the net movement across these buckets.`
+        ? `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${period}${what}\nPrompts tracked: ${d.prompts.tracked}\nBucket counts: ${JSON.stringify({ new_wins: d.prompts.newWins.length, rank_gains: d.prompts.rankGains.length, other_prompts_led_by_a_competitor: d.prompts.watchlist.length })}\nNew wins (examples): ${JSON.stringify(d.prompts.newWins.slice(0, 5).map((m) => m.text))}\n\nField meanings: "found" means an AI answer mentioned the brand. new_wins = prompts where the brand was not found in the comparison and is found now. rank_gains = prompts where the brand's best rank improved, counting not found as below every rank, so every new win is also a rank gain (never add new_wins and rank_gains together). other_prompts_led_by_a_competitor = further prompts, not counted in new_wins or rank_gains, where the brand is found but a competitor holds the #1 spot. Never describe those as a subset of the new wins.\n\nWrite the Key Takeaway sentence now, summarizing the net movement across these buckets.`
         : `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${d.period.label}${none("prompt-level comparison")}\nPrompts tracked: ${d.prompts.tracked}\nPrompts where ${brand} is mentioned but a competitor holds the #1 spot: ${d.prompts.watchlist.length}\nThose prompts with ${brand}'s best rank and the brand most often at #1: ${JSON.stringify(d.prompts.watchlist.slice(0, 8).map((m) => ({ prompt: m.text, best_rank: m.currentBestRank, most_often_first: m.outrankedBy })))}\n\nWrite the Key Takeaway sentence now, describing where ${brand} stands on these prompts in ${d.period.label}.`,
     ],
     [
