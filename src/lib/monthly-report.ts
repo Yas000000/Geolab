@@ -106,7 +106,7 @@ export interface ReportComparison {
   period: ReportPeriod | null; // the days of GEO runs compared (null for an imported benchmark)
   trafficPeriod: ReportPeriod | null; // the Google Analytics days compared
   source: string | null; // an imported benchmark's source, e.g. "ISA"
-  sentimentScore: number | null; // an imported benchmark's own 0-100 sentiment: a different scale, never compared
+  sentimentScore: number | null; // an imported benchmark's own 0-100 sentiment score (compared as a %)
   competitors: BenchmarkCompetitorRow[] | null; // an imported benchmark's competitor table
   assumedZero?: string[]; // scorecard figures an imported benchmark didn't report, counted as 0 (zeroFillBenchmark)
   fromPromptTable?: string[]; // scorecard figures worked out from its prompt table (benchmarkPromptFigures)
@@ -562,7 +562,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
       avgRankWhenFound: snap.ownPosition,
       rank1Count: fromPrompts.rank1Count,
       top3Pct: fromPrompts.top3Pct,
-      sentimentPct: null, // the benchmark's sentiment is a 0-100 score, not "% of mentions not negative"
+      sentimentPct: snap.ownSentiment, // its 0-100 sentiment score, read as a % (see zeroFillBenchmark)
     };
     const prompts = new Map<string, PromptThen>();
     for (const p of snap.prompts) {
@@ -739,15 +739,17 @@ function benchmarkPromptFigures(
 /**
  * Scorecard figures an imported benchmark didn't report count as 0 there, so
  * every tile has a number to compare with (the user's call, 2026-11-17).
- * Sentiment is left alone: the benchmark has it, on a different scale. Avg
- * rank is left alone too: 0 isn't a rank. Also applied to saved reports when
- * they're opened (normalizeReportData), so older ones show the zeros too.
+ * Its 0-100 sentiment score is read as a % (85/100 -> 85%, the user's call,
+ * 2026-11-17). Avg rank is left alone: 0 isn't a rank. Also applied to saved
+ * reports when they're opened (normalizeReportData), so older ones match.
  */
 function zeroFillBenchmark(d: MonthlyReportData): MonthlyReportData {
-  if (d.compare.kind !== "benchmark" || d.compare.assumedZero) return d;
+  if (d.compare.kind !== "benchmark") return d;
   const filled: CompareScore = d.scorecard.previous
     ? { ...d.scorecard.previous }
     : { checks: null, visibilityPct: null, avgRankWhenFound: null, rank1Count: null, top3Pct: null, sentimentPct: null };
+  if (filled.sentimentPct == null && d.compare.sentimentScore != null) filled.sentimentPct = d.compare.sentimentScore;
+  if (d.compare.assumedZero) return { ...d, scorecard: { ...d.scorecard, previous: filled } };
   const assumedZero: string[] = [];
   if (filled.visibilityPct == null) {
     filled.visibilityPct = 0;

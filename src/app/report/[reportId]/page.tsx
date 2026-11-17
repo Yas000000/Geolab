@@ -238,17 +238,14 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
     ? [
         c.fromPromptTable?.includes("#1 Rankings") &&
           `#1 Rankings ${then} counts its prompts where ${brand} ranked #1${c.fromPromptTable.includes("Top-3 Visibility") ? ", and Top-3 Visibility is its visibility from prompts ranked in the top 3" : ""}, from its prompt table.`,
+        c.sentimentScore != null && `Its sentiment score of ${c.sentimentScore}/100 counts as ${c.sentimentScore}%.`,
         c.assumedZero?.length &&
           `It didn't report ${andList(c.assumedZero)}, so ${c.assumedZero.length === 1 ? "that counts" : "those count"} as 0 there.`,
       ]
         .filter(Boolean)
         .join(" ")
     : "";
-  const cards = scoreCards(cur, prev, isBenchmark).map((card) =>
-    card.label === "Sentiment Score" && isBenchmark && c.sentimentScore != null
-      ? { ...card, missing: `${c.sentimentScore}/100 ${then}, on a different scale` }
-      : { ...card, missing },
-  );
+  const cards = scoreCards(cur, prev, isBenchmark).map((card) => ({ ...card, missing }));
   let n = 0;
 
   return (
