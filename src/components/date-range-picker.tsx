@@ -34,7 +34,8 @@ function inRange(d: Date, start: Date | null, end: Date | null) {
   return t >= lo.getTime() && t <= hi.getTime();
 }
 
-function CalendarMonth({
+/** One month of the calendar grid. Also used by the Reports tab's period picker (report-range-picker.tsx). */
+export function CalendarMonth({
   monthDate,
   start,
   end,

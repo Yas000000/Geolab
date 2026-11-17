@@ -3,10 +3,25 @@ import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 import { citationTrackedRuns, isLiveSearchModel, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { CRAWL_VENDOR_LABEL, latestCrawlCheck } from "@/lib/crawl-check";
+import {
+  daysLabel,
+  isoDay,
+  makePeriod,
+  monthPeriod,
+  periodBounds,
+  periodDays,
+  periodEndingOn,
+  previousPeriod,
+  type CompareSpec,
+  type ReportPeriod,
+} from "@/lib/report-period";
 
-// The monthly client report: one calendar month vs the month before, from
-// this portal's own data (replaces geo-monthly-report's keyword.com CSV
-// diffing for portal clients). Months are UTC calendar months.
+// The client report: one period of days (default: the last full calendar
+// month) against a comparison, from this portal's own data (replaces
+// geo-monthly-report's keyword.com CSV diffing for portal clients). The
+// comparison is, by default, the client's imported benchmark (e.g. the ISA),
+// else its first crawl; or the period before, or any range of days. Days
+// are UTC calendar days.
 
 export interface ScoreMetrics {
   checks: number;
@@ -17,6 +32,9 @@ export interface ScoreMetrics {
   sentimentPct: number | null; // % of mentions that weren't negative (same formula as the run page)
 }
 
+/** The comparison side of the scorecard. An imported benchmark only has some of the figures (null = not in it). */
+export type CompareScore = { [K in keyof ScoreMetrics]: ScoreMetrics[K] | null };
+
 export interface PlatformRow {
   platform: string;
   label: string;
@@ -26,7 +44,7 @@ export interface PlatformRow {
 
 export interface PromptMove {
   text: string;
-  previouslyTracked: boolean; // false = no checks of this prompt last month, so "then" is unknown, not "not found"
+  previouslyTracked: boolean; // false = not in the comparison, so "then" is unknown, not "not found"
   previousBestRank: number | null;
   currentBestRank: number | null;
   outrankedBy?: string | null; // the brand most often at #1 when the client wasn't
@@ -36,7 +54,7 @@ export interface CompetitorRow {
   name: string;
   isClient: boolean;
   currentSovPct: number;
-  previousSovPct: number | null; // null = not mentioned at all last month
+  previousSovPct: number | null; // null = not mentioned at all in the comparison
   currentVisibilityPct: number;
 }
 
@@ -57,22 +75,46 @@ export interface TrafficTotals {
   directAiEstimate: { low: number; high: number };
   gscClicks: number | null;
   gscImpressions: number | null;
-  days: number; // days with Google Analytics data -- below daysInMonth means a partial month
-  daysInMonth: number;
+  days: number; // days with Google Analytics data -- below daysInPeriod means a partial period
+  daysInPeriod: number;
+}
+
+/** One row of an imported benchmark's competitor table, as the source document reports it. */
+export interface BenchmarkCompetitorRow {
+  name: string;
+  sharePct: number | null;
+  visibilityPct: number | null;
+  position: number | null;
+}
+
+export interface ReportComparison {
+  kind: CompareSpec["kind"];
+  label: string; // short, for column headers: "ISA Benchmark", "First Crawl", "September 2026"
+  phrase: string; // inside sentences: "the ISA benchmark (Mar 17, 2026)", "September 2026"
+  date: string | null; // when the benchmark or first crawl was taken, e.g. "Mar 17, 2026"
+  period: ReportPeriod | null; // the days of GEO runs compared (null for an imported benchmark)
+  trafficPeriod: ReportPeriod | null; // the Google Analytics days compared
+  source: string | null; // an imported benchmark's source, e.g. "ISA"
+  sentimentScore: number | null; // an imported benchmark's own 0-100 sentiment: a different scale, never compared
+  competitors: BenchmarkCompetitorRow[] | null; // an imported benchmark's competitor table
+}
+
+export interface RunCounts {
+  runs: number;
+  live: number;
+  training: number;
 }
 
 export interface MonthlyReportData {
-  month: string;
-  monthLabel: string;
-  previousMonth: string;
-  previousMonthLabel: string;
+  period: ReportPeriod;
+  compare: ReportComparison;
   clientName: string;
   domain: string | null;
   brandName: string | null;
-  runs: { current: { runs: number; live: number; training: number }; previous: { runs: number; live: number; training: number } };
-  scorecard: { current: ScoreMetrics; previous: ScoreMetrics | null };
+  runs: { current: RunCounts; previous: RunCounts | null };
+  scorecard: { current: ScoreMetrics; previous: CompareScore | null };
   platforms: PlatformRow[];
-  prompts: { tracked: number; newWins: PromptMove[]; rankGains: PromptMove[]; watchlist: PromptMove[] };
+  prompts: { tracked: number; compared: boolean; newWins: PromptMove[]; rankGains: PromptMove[]; watchlist: PromptMove[] };
   competitors: CompetitorRow[];
   citations: CitationSection | null;
   traffic: { current: TrafficTotals; previous: TrafficTotals | null } | null;
@@ -81,35 +123,49 @@ export interface MonthlyReportData {
 
 export type ReportTakeaways = Partial<Record<"scorecard" | "platforms" | "prompts" | "competitors" | "citations" | "traffic", string>>;
 
-const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+/**
+ * Reports saved before custom periods (2026-11-17) stored one month against
+ * the month before, with month/monthLabel/previousMonth fields. Maps them to
+ * the current shape so they still open.
+ */
+type LegacyTraffic = Omit<TrafficTotals, "daysInPeriod"> & { daysInMonth: number };
+type LegacyReport = Omit<MonthlyReportData, "period" | "compare" | "prompts" | "traffic"> & {
+  month: string;
+  previousMonth: string;
+  prompts: Omit<MonthlyReportData["prompts"], "compared">;
+  traffic: { current: LegacyTraffic; previous: LegacyTraffic | null } | null;
+};
 
-export function isValidMonth(month: string): boolean {
-  return MONTH_RE.test(month);
+export function normalizeReportData(raw: unknown): MonthlyReportData {
+  if ((raw as MonthlyReportData).period) return raw as MonthlyReportData;
+  const { month, previousMonth, ...r } = raw as LegacyReport;
+  const period = monthPeriod(month);
+  const prev = monthPeriod(previousMonth);
+  const fix = ({ daysInMonth, ...t }: LegacyTraffic): TrafficTotals => ({ ...t, daysInPeriod: daysInMonth });
+  return {
+    ...r,
+    period,
+    compare: {
+      kind: "previous",
+      label: prev.label,
+      phrase: prev.label,
+      date: null,
+      period: prev,
+      trafficPeriod: prev,
+      source: null,
+      sentimentScore: null,
+      competitors: null,
+    },
+    prompts: { ...r.prompts, compared: !!r.scorecard.previous },
+    traffic: r.traffic && { current: fix(r.traffic.current), previous: r.traffic.previous && fix(r.traffic.previous) },
+  };
 }
 
-export function monthBounds(month: string): { start: Date; end: Date } {
-  const [y, m] = month.split("-").map(Number);
-  return { start: new Date(Date.UTC(y, m - 1, 1)), end: new Date(Date.UTC(y, m, 1)) };
-}
+type RunWhere = { startedAt: { gte: Date; lt: Date } } | { id: { in: string[] } };
 
-export function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-export function monthLabel(month: string): string {
-  return monthBounds(month).start.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-}
-
-/** The most recent full calendar month (UTC) -- the default report month. */
-export function lastCompleteMonth(now = new Date()): string {
-  return shiftMonth(`${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`, -1);
-}
-
-async function loadRuns(clientId: string, start: Date, end: Date) {
+async function loadRuns(clientId: string, where: RunWhere) {
   return prisma.run.findMany({
-    where: { clientId, status: "COMPLETE", startedAt: { gte: start, lt: end } },
+    where: { clientId, status: "COMPLETE", ...where },
     orderBy: { startedAt: "asc" },
     select: {
       startedAt: true,
@@ -135,11 +191,17 @@ async function loadRuns(clientId: string, start: Date, end: Date) {
   });
 }
 
+const inPeriod = (p: ReportPeriod): RunWhere => {
+  const b = periodBounds(p);
+  return { startedAt: { gte: b.start, lt: b.end } };
+};
+
 type RunRows = Awaited<ReturnType<typeof loadRuns>>;
 type Check = RunRows[number]["rawResponses"][number];
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, c) => a + c, 0) / xs.length : null);
 const pct = (n: number, d: number) => (d ? (n / d) * 100 : 0);
+const promptKey = (text: string) => text.trim().toLowerCase();
 
 function scoreMetrics(checks: Check[]): ScoreMetrics {
   const mentioned = checks.filter((c) => c.parsedResult?.clientBrandMentioned);
@@ -156,7 +218,7 @@ function scoreMetrics(checks: Check[]): ScoreMetrics {
   };
 }
 
-function runCounts(runs: RunRows) {
+function runCounts(runs: RunRows): RunCounts {
   let live = 0;
   for (const run of runs) if (run.rawResponses.some((r) => isLiveSearchModel(r.modelId))) live += 1;
   return { runs: runs.length, live, training: runs.length - live };
@@ -177,26 +239,39 @@ function platformRows(current: Check[], previous: Check[]): PlatformRow[] {
   }));
 }
 
-function promptMoves(current: Check[], previous: Check[]) {
-  interface Acc { text: string; checks: Check[] }
-  const group = (checks: Check[]) => {
-    const m = new Map<string, Acc>();
-    for (const c of checks) {
-      const key = c.prompt.text.trim().toLowerCase();
-      const a = m.get(key) ?? { text: c.prompt.text, checks: [] };
-      a.checks.push(c);
-      m.set(key, a);
-    }
-    return m;
-  };
-  const bestRank = (checks: Check[]) => {
-    const ranks = checks
-      .filter((c) => c.parsedResult?.clientBrandMentioned)
-      .map((c) => c.parsedResult?.clientBrandRank)
-      .filter((r): r is number => r != null);
-    return ranks.length ? Math.min(...ranks) : null;
-  };
-  const found = (checks: Check[]) => checks.some((c) => c.parsedResult?.clientBrandMentioned);
+/** How a prompt did in the comparison: from its checks, or an imported benchmark's prompt table. */
+interface PromptThen {
+  found: boolean;
+  bestRank: number | null;
+}
+
+function groupByPrompt(checks: Check[]) {
+  const m = new Map<string, { text: string; checks: Check[] }>();
+  for (const c of checks) {
+    const key = promptKey(c.prompt.text);
+    const a = m.get(key) ?? { text: c.prompt.text, checks: [] };
+    a.checks.push(c);
+    m.set(key, a);
+  }
+  return m;
+}
+
+const bestRank = (checks: Check[]) => {
+  const ranks = checks
+    .filter((c) => c.parsedResult?.clientBrandMentioned)
+    .map((c) => c.parsedResult?.clientBrandRank)
+    .filter((r): r is number => r != null);
+  return ranks.length ? Math.min(...ranks) : null;
+};
+const found = (checks: Check[]) => checks.some((c) => c.parsedResult?.clientBrandMentioned);
+
+function promptsThen(checks: Check[]): Map<string, PromptThen> {
+  const out = new Map<string, PromptThen>();
+  for (const [key, a] of groupByPrompt(checks)) out.set(key, { found: found(a.checks), bestRank: bestRank(a.checks) });
+  return out;
+}
+
+function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
   const leader = (checks: Check[]) => {
     const counts = new Map<string, number>();
     for (const c of checks) {
@@ -209,25 +284,30 @@ function promptMoves(current: Check[], previous: Check[]) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   };
 
-  const cur = group(current);
-  const prev = group(previous);
+  const cur = groupByPrompt(current);
   const newWins: PromptMove[] = [];
   const rankGains: PromptMove[] = [];
   const watchlist: PromptMove[] = [];
   for (const [key, a] of cur) {
-    const p = prev.get(key);
+    const p = then?.get(key);
     const currentBestRank = bestRank(a.checks);
-    const previousBestRank = p ? bestRank(p.checks) : null;
+    const previousBestRank = p?.bestRank ?? null;
     const move = { text: a.text, previouslyTracked: !!p, previousBestRank, currentBestRank };
-    // A prompt with no checks last month is new to tracking, not a win.
-    if (p && !found(p.checks) && found(a.checks)) newWins.push(move);
-    else if (p && found(p.checks) && currentBestRank != null && previousBestRank != null && currentBestRank < previousBestRank)
+    // A prompt that isn't in the comparison is new to tracking, not a win.
+    if (p && !p.found && found(a.checks)) newWins.push(move);
+    else if (p && p.found && currentBestRank != null && previousBestRank != null && currentBestRank < previousBestRank)
       rankGains.push(move);
     else if (found(a.checks) && currentBestRank != null && currentBestRank > 1)
       watchlist.push({ ...move, outrankedBy: leader(a.checks) });
   }
   const byRank = (x: PromptMove, y: PromptMove) => (x.currentBestRank ?? 99) - (y.currentBestRank ?? 99) || x.text.localeCompare(y.text);
-  return { tracked: cur.size, newWins: newWins.sort(byRank), rankGains: rankGains.sort(byRank), watchlist: watchlist.sort(byRank) };
+  return {
+    tracked: cur.size,
+    compared: !!then && then.size > 0,
+    newWins: newWins.sort(byRank),
+    rankGains: rankGains.sort(byRank),
+    watchlist: watchlist.sort(byRank),
+  };
 }
 
 function competitorRows(current: Check[], previous: Check[]): CompetitorRow[] {
@@ -293,8 +373,9 @@ function citationSection(current: RunRows, previous: RunRows, ownDomain: string 
   };
 }
 
-async function trafficTotals(clientId: string, start: Date, end: Date): Promise<TrafficTotals | null> {
-  const where = { clientId, date: { gte: start, lt: end } };
+async function trafficTotals(clientId: string, period: ReportPeriod): Promise<TrafficTotals | null> {
+  const b = periodBounds(period);
+  const where = { clientId, date: { gte: b.start, lt: b.end } };
   const [ga4, ai, gsc] = await Promise.all([
     prisma.analyticsSnapshot.findMany({ where, select: { sessions: true } }),
     prisma.aiTrafficSnapshot.findMany({ where }),
@@ -318,50 +399,194 @@ async function trafficTotals(clientId: string, start: Date, end: Date): Promise<
     gscClicks: gsc.length ? sum(gsc, (r) => r.clicks) : null,
     gscImpressions: gsc.length ? sum(gsc, (r) => r.impressions) : null,
     days: Math.max(ga4.length, ai.length),
-    daysInMonth: Math.round((end.getTime() - start.getTime()) / 86_400_000),
+    daysInPeriod: periodDays(period.start, period.end),
   };
 }
 
-/** True when either month's Google Analytics data is missing days, so totals can't be compared as-is. */
-export function trafficIsPartial(traffic: { current: TrafficTotals; previous: TrafficTotals | null }): boolean {
-  const partial = (t: TrafficTotals | null) => !!t && t.days < t.daysInMonth;
-  return partial(traffic.current) || partial(traffic.previous);
+/**
+ * Why the two traffic columns can't be compared as totals (missing days of
+ * Google Analytics data, or periods of different lengths), or null when they
+ * can. Shared by the report page and the traffic takeaway.
+ */
+export function trafficCaveat(traffic: { current: TrafficTotals; previous: TrafficTotals | null }, curLabel: string, prevLabel: string): string | null {
+  const cur = traffic.current;
+  const prev = traffic.previous;
+  const partial = (t: TrafficTotals | null) => !!t && t.days < t.daysInPeriod;
+  if (partial(cur) || partial(prev)) {
+    const cover = (t: TrafficTotals, label: string) => `${t.days} of ${t.daysInPeriod} days in ${label}`;
+    return `Google Analytics data covers ${cover(cur, curLabel)}${prev ? ` and ${cover(prev, prevLabel)}` : ""}, so the totals can't be compared directly.`;
+  }
+  if (prev && prev.daysInPeriod !== cur.daysInPeriod) {
+    return `${curLabel} has ${cur.daysInPeriod} days and ${prevLabel} has ${prev.daysInPeriod}, so the totals can't be compared directly.`;
+  }
+  return null;
 }
 
-export async function buildMonthlyReportData(clientId: string, month: string): Promise<MonthlyReportData | null> {
+// ── Comparisons ───────────────────────────────────────────────────────────
+
+/** The client's first training run and first live search run (its first crawl), oldest first. */
+async function firstCrawlRuns(clientId: string): Promise<{ id: string; startedAt: Date }[]> {
+  const runs = await prisma.run.findMany({
+    where: { clientId, status: "COMPLETE" },
+    orderBy: { startedAt: "asc" },
+    select: { id: true, startedAt: true, rawResponses: { where: { responseText: { not: "" } }, select: { modelId: true }, take: 1 } },
+  });
+  let training: (typeof runs)[number] | undefined;
+  let live: (typeof runs)[number] | undefined;
+  for (const run of runs) {
+    const first = run.rawResponses[0];
+    if (!first) continue; // nothing answered
+    if (isLiveSearchModel(first.modelId)) live ??= run;
+    else training ??= run;
+    if (training && live) break;
+  }
+  return [training, live]
+    .filter((r): r is NonNullable<typeof r> => !!r)
+    .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+    .map((r) => ({ id: r.id, startedAt: r.startedAt }));
+}
+
+/** The Compare With choices for one client, in menu order, with the default first. */
+export async function compareChoices(clientId: string) {
+  const [benchmarks, firstCrawl] = await Promise.all([
+    prisma.benchmarkSnapshot.findMany({
+      where: { clientId },
+      orderBy: { snapshotDate: "asc" },
+      select: { id: true, source: true, snapshotDate: true },
+    }),
+    firstCrawlRuns(clientId),
+  ]);
+  return {
+    benchmarks: benchmarks.map((b) => ({ id: b.id, label: `${b.source} benchmark (${daysLabel([isoDay(b.snapshotDate)])})` })),
+    firstCrawl: firstCrawl.length ? { label: `First crawl (${daysLabel(firstCrawl.map((r) => isoDay(r.startedAt)))})`, days: firstCrawl.map((r) => isoDay(r.startedAt)) } : null,
+  };
+}
+
+/** The default comparison: the client's first imported benchmark, else its first crawl, else the period before. */
+export function defaultCompare(choices: Awaited<ReturnType<typeof compareChoices>>): CompareSpec {
+  if (choices.benchmarks[0]) return { kind: "benchmark", snapshotId: choices.benchmarks[0].id };
+  if (choices.firstCrawl) return { kind: "firstCrawl" };
+  return { kind: "previous" };
+}
+
+interface ResolvedCompare {
+  info: ReportComparison;
+  runs: RunRows; // the comparison's GEO runs (none for an imported benchmark)
+  score: CompareScore | null; // set for an imported benchmark (from runs otherwise)
+  prompts: Map<string, PromptThen> | null; // set for an imported benchmark (from runs otherwise)
+}
+
+async function resolveCompare(clientId: string, period: ReportPeriod, spec: CompareSpec): Promise<ResolvedCompare | null> {
+  const length = periodDays(period.start, period.end);
+  const info = { date: null, source: null, sentimentScore: null, competitors: null };
+  const fromRuns = { score: null, prompts: null };
+
+  if (spec.kind === "benchmark") {
+    const snap = await prisma.benchmarkSnapshot.findFirst({
+      where: { id: spec.snapshotId, clientId },
+      include: { competitors: true, prompts: true },
+    });
+    if (!snap) return null;
+    const day = isoDay(snap.snapshotDate);
+    const date = daysLabel([day]);
+    const score: CompareScore = {
+      checks: null,
+      visibilityPct: snap.ownVisibilityPct,
+      avgRankWhenFound: snap.ownPosition,
+      rank1Count: null,
+      top3Pct: null,
+      sentimentPct: null, // the benchmark's sentiment is a 0-100 score, not "% of mentions not negative"
+    };
+    const prompts = new Map<string, PromptThen>();
+    for (const p of snap.prompts) {
+      prompts.set(promptKey(p.promptText), { found: p.position != null || (p.visibilityPct ?? 0) > 0, bestRank: p.position });
+    }
+    return {
+      info: {
+        kind: "benchmark",
+        label: `${snap.source} Benchmark`,
+        phrase: `the ${snap.source} benchmark (${date})`,
+        date,
+        period: null,
+        trafficPeriod: periodEndingOn(day, length),
+        source: snap.source,
+        sentimentScore: snap.ownSentiment,
+        competitors: [...snap.competitors]
+          .sort((a, b) => (b.shareOfVoicePct ?? -1) - (a.shareOfVoicePct ?? -1))
+          .map((c) => ({ name: c.name, sharePct: c.shareOfVoicePct, visibilityPct: c.visibilityPct, position: c.position })),
+      },
+      runs: [],
+      score: Object.values(score).some((v) => v != null) ? score : null,
+      prompts: prompts.size ? prompts : null,
+    };
+  }
+
+  if (spec.kind === "firstCrawl") {
+    const first = await firstCrawlRuns(clientId);
+    if (!first.length) return null;
+    const days = first.map((r) => isoDay(r.startedAt));
+    const date = daysLabel(days);
+    return {
+      ...fromRuns,
+      info: {
+        ...info,
+        kind: "firstCrawl",
+        label: "First Crawl",
+        phrase: `the first crawl (${date})`,
+        date,
+        period: makePeriod(days[0], days[days.length - 1]),
+        trafficPeriod: periodEndingOn(days[0], length),
+      },
+      runs: await loadRuns(clientId, { id: { in: first.map((r) => r.id) } }),
+    };
+  }
+
+  const p = spec.kind === "previous" ? previousPeriod(period.start, period.end) : makePeriod(spec.start, spec.end);
+  return {
+    ...fromRuns,
+    info: { ...info, kind: spec.kind, label: p.label, phrase: p.label, period: p, trafficPeriod: p },
+    runs: await loadRuns(clientId, inPeriod(p)),
+  };
+}
+
+export async function buildMonthlyReportData(
+  clientId: string,
+  period: ReportPeriod,
+  spec: CompareSpec,
+): Promise<MonthlyReportData | "client_not_found" | "compare_not_found"> {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     select: { name: true, domain: true, brands: { where: { isClientBrand: true }, select: { name: true }, take: 1 } },
   });
-  if (!client) return null;
+  if (!client) return "client_not_found";
+  const compare = await resolveCompare(clientId, period, spec);
+  if (!compare) return "compare_not_found";
 
-  const prevMonth = shiftMonth(month, -1);
-  const cur = monthBounds(month);
-  const prev = monthBounds(prevMonth);
-  const [curRuns, prevRuns, curTraffic, prevTraffic, crawl] = await Promise.all([
-    loadRuns(clientId, cur.start, cur.end),
-    loadRuns(clientId, prev.start, prev.end),
-    trafficTotals(clientId, cur.start, cur.end),
-    trafficTotals(clientId, prev.start, prev.end),
+  const [curRuns, curTraffic, prevTraffic, crawl] = await Promise.all([
+    loadRuns(clientId, inPeriod(period)),
+    trafficTotals(clientId, period),
+    compare.info.trafficPeriod ? trafficTotals(clientId, compare.info.trafficPeriod) : null,
     latestCrawlCheck(clientId),
   ]);
   const curChecks = curRuns.flatMap((r) => r.rawResponses);
-  const prevChecks = prevRuns.flatMap((r) => r.rawResponses);
+  const prevChecks = compare.runs.flatMap((r) => r.rawResponses);
+  const fromRuns = compare.info.kind !== "benchmark";
 
   return {
-    month,
-    monthLabel: monthLabel(month),
-    previousMonth: prevMonth,
-    previousMonthLabel: monthLabel(prevMonth),
+    period,
+    compare: compare.info,
     clientName: client.name,
     domain: client.domain,
     brandName: client.brands[0]?.name ?? null,
-    runs: { current: runCounts(curRuns), previous: runCounts(prevRuns) },
-    scorecard: { current: scoreMetrics(curChecks), previous: prevChecks.length ? scoreMetrics(prevChecks) : null },
+    runs: { current: runCounts(curRuns), previous: fromRuns ? runCounts(compare.runs) : null },
+    scorecard: {
+      current: scoreMetrics(curChecks),
+      previous: fromRuns ? (prevChecks.length ? scoreMetrics(prevChecks) : null) : compare.score,
+    },
     platforms: platformRows(curChecks, prevChecks),
-    prompts: promptMoves(curChecks, prevChecks),
+    prompts: promptMoves(curChecks, fromRuns ? (prevChecks.length ? promptsThen(prevChecks) : null) : compare.prompts),
     competitors: competitorRows(curChecks, prevChecks),
-    citations: citationSection(curRuns, prevRuns, siteDomain(client.domain)),
+    citations: citationSection(curRuns, compare.runs, siteDomain(client.domain)),
     traffic: curTraffic ? { current: curTraffic, previous: prevTraffic } : null,
     crawl: crawl
       ? {
@@ -379,7 +604,7 @@ export async function buildMonthlyReportData(clientId: string, month: string): P
 // comma, American English).
 
 const STYLE =
-  "Write like an analyst summarizing a monthly performance report for a client who already " +
+  "Write like an analyst summarizing a performance report for a client who already " +
   "knows their brand and business. State what changed and why it matters, using the real " +
   "numbers given. Do NOT recommend actions, suggest next steps, or use action-plan language " +
   "(no 'should', 'consider', 'recommend', 'needs to') -- describe the result only, not what to " +
@@ -420,12 +645,18 @@ const r1 = (n: number | null | undefined) => (n == null ? null : Math.round(n * 
 
 export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaways> {
   const brand = d.brandName ?? d.clientName;
-  const period = `${d.previousMonthLabel} versus ${d.monthLabel}`;
+  const c = d.compare;
+  const isBenchmark = c.kind === "benchmark";
+  const period = `${c.phrase} versus ${d.period.label}`;
+  const what = isBenchmark
+    ? `\nThe comparison is ${c.phrase}, an earlier audit of ${brand}'s AI visibility. A null comparison value means that figure was not part of the benchmark.`
+    : c.kind === "firstCrawl"
+      ? `\nThe comparison is ${c.phrase}, the first tracking of ${brand}'s AI visibility.`
+      : "";
+  const none = (label: string) => `\nThere is no ${label} data to compare with, so nothing here is a change over time. Never describe a number as rising, falling or improving.`;
   const hasPrev = !!d.scorecard.previous;
-  const prevNote = hasPrev
-    ? ""
-    : `\nThere is no data for ${d.previousMonthLabel}, so nothing here is a change over time. Never describe a number as rising, falling or improving.`;
-  const metrics = (m: ScoreMetrics | null) =>
+  const runsCompared = !isBenchmark && hasPrev;
+  const metrics = (m: CompareScore | null) =>
     m && {
       visibility_pct: r1(m.visibilityPct),
       avg_rank_when_found: r1(m.avgRankWhenFound),
@@ -435,45 +666,55 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
       checks: m.checks,
     };
 
-  // A month with no GEO checks gets no visibility takeaways (nothing to describe).
+  // A period with no GEO checks gets no visibility takeaways (nothing to describe).
   const jobs: [keyof ReportTakeaways, string][] = d.scorecard.current.checks === 0 ? [] : [
     [
       "scorecard",
-      `${STYLE}\n\nSection: Executive Scorecard\nBrand: ${brand}\nPeriod: ${period}${prevNote}\nData (previous month, then this month): ${JSON.stringify({ previous: metrics(d.scorecard.previous), current: metrics(d.scorecard.current) })}\n\nField meanings: visibility_pct = % of AI answers across all tracked prompts and platforms that mentioned the brand. avg_rank_when_found = average list position when mentioned (lower is better). rank1_count = answers where the brand was listed #1. top3_visibility_pct = % of all answers where the brand ranked in the top 3. sentiment_score_pct = % of the brand's mentions that were not negative. checks = AI answers checked.\n\nWrite the Key Takeaway sentence now, referencing the clearest change in the numbers.`,
+      `${STYLE}\n\nSection: Executive Scorecard\nBrand: ${brand}\nPeriod: ${period}${what}${hasPrev ? "" : none("comparison")}\nData (the comparison, then ${d.period.label}): ${JSON.stringify({ comparison: metrics(d.scorecard.previous), current: metrics(d.scorecard.current) })}\n\nField meanings: visibility_pct = % of AI answers across all tracked prompts and platforms that mentioned the brand. avg_rank_when_found = average list position when mentioned (lower is better). rank1_count = answers where the brand was listed #1. top3_visibility_pct = % of all answers where the brand ranked in the top 3. sentiment_score_pct = % of the brand's mentions that were not negative. checks = AI answers checked.\n\nWrite the Key Takeaway sentence now, referencing the clearest change in the numbers.`,
     ],
     [
       "platforms",
-      `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${prevNote}\nPer platform, visibility % and average rank when found, previous month then this month: ${JSON.stringify(
-        d.platforms.map((p) => ({
-          platform: p.label,
-          previous_visibility_pct: r1(p.previous?.visibilityPct),
-          current_visibility_pct: r1(p.current?.visibilityPct),
-          previous_avg_rank: r1(p.previous?.avgRank),
-          current_avg_rank: r1(p.current?.avgRank),
-        })),
-      )}\nA null value means that platform had no answers that month.\n\nWrite the Key Takeaway sentence now, calling out which platform improved or declined the most.`,
+      runsCompared
+        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
+            d.platforms.map((p) => ({
+              platform: p.label,
+              comparison_answers: p.previous?.checks ?? 0,
+              current_answers: p.current?.checks ?? 0,
+              comparison_visibility_pct: r1(p.previous?.visibilityPct),
+              current_visibility_pct: r1(p.current?.visibilityPct),
+              comparison_avg_rank: r1(p.previous?.avgRank),
+              current_avg_rank: r1(p.current?.avgRank),
+            })),
+          )}\nanswers = AI answers checked on that platform (0 means it had no answers in that period). A null avg_rank with answers above 0 means the platform answered but never mentioned the brand.\n\nWrite the Key Takeaway sentence now, calling out which platform improved or declined the most.`
+        : `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${d.period.label}${none("per-platform comparison")}\nPer platform in ${d.period.label}, visibility % and average rank when found: ${JSON.stringify(
+            d.platforms.map((p) => ({ platform: p.label, answers: p.current?.checks ?? 0, visibility_pct: r1(p.current?.visibilityPct), avg_rank: r1(p.current?.avgRank) })),
+          )}\nanswers = AI answers checked on that platform. A null avg_rank with answers above 0 means the platform answered but never mentioned the brand.\n\nWrite the Key Takeaway sentence now, describing how the platforms differ.`,
     ],
     [
       "prompts",
-      hasPrev
-        ? `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${period}\nPrompts tracked: ${d.prompts.tracked}\nBucket counts: ${JSON.stringify({ new_wins: d.prompts.newWins.length, rank_gains: d.prompts.rankGains.length, watchlist: d.prompts.watchlist.length })}\nNew wins (examples): ${JSON.stringify(d.prompts.newWins.slice(0, 5).map((m) => m.text))}\n\nField meanings: "found" means an AI answer mentioned the brand. new_wins = prompts where the brand was not found last month and is found now. rank_gains = prompts where the brand was found in both months and its best rank improved. watchlist = prompts where the brand is found but a competitor holds the #1 spot.\n\nWrite the Key Takeaway sentence now, summarizing the net movement across these buckets.`
-        : `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nMonth: ${d.monthLabel}${prevNote}\nPrompts tracked: ${d.prompts.tracked}\nPrompts where ${brand} is mentioned but a competitor holds the #1 spot: ${d.prompts.watchlist.length}\nThose prompts with ${brand}'s best rank and the brand most often at #1: ${JSON.stringify(d.prompts.watchlist.slice(0, 8).map((m) => ({ prompt: m.text, best_rank: m.currentBestRank, most_often_first: m.outrankedBy })))}\n\nWrite the Key Takeaway sentence now, describing where ${brand} stands on these prompts this month.`,
+      d.prompts.compared
+        ? `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${period}${what}\nPrompts tracked: ${d.prompts.tracked}\nBucket counts: ${JSON.stringify({ new_wins: d.prompts.newWins.length, rank_gains: d.prompts.rankGains.length, other_prompts_led_by_a_competitor: d.prompts.watchlist.length })}\nNew wins (examples): ${JSON.stringify(d.prompts.newWins.slice(0, 5).map((m) => m.text))}\n\nField meanings: "found" means an AI answer mentioned the brand. new_wins = prompts where the brand was not found in the comparison and is found now. rank_gains = prompts where the brand was found in both and its best rank improved. other_prompts_led_by_a_competitor = further prompts, not counted in new_wins or rank_gains, where the brand is found but a competitor holds the #1 spot. Never describe those as a subset of the new wins.\n\nWrite the Key Takeaway sentence now, summarizing the net movement across these buckets.`
+        : `${STYLE}\n\nSection: Prompt Movement\nBrand: ${brand}\nPeriod: ${d.period.label}${none("prompt-level comparison")}\nPrompts tracked: ${d.prompts.tracked}\nPrompts where ${brand} is mentioned but a competitor holds the #1 spot: ${d.prompts.watchlist.length}\nThose prompts with ${brand}'s best rank and the brand most often at #1: ${JSON.stringify(d.prompts.watchlist.slice(0, 8).map((m) => ({ prompt: m.text, best_rank: m.currentBestRank, most_often_first: m.outrankedBy })))}\n\nWrite the Key Takeaway sentence now, describing where ${brand} stands on these prompts in ${d.period.label}.`,
     ],
     [
       "competitors",
-      `${STYLE}\n\nSection: Competitor Share of Voice\nBrand: ${brand}\nPeriod: ${period}${prevNote}\nShare of Voice (% of all brand mentions in AI answers), previous month then this month: ${JSON.stringify(
-        d.competitors.map((c) => ({ brand: c.name, is_client: c.isClient, previous_pct: r1(c.previousSovPct), current_pct: r1(c.currentSovPct) })),
-      )}\nA null previous value means the brand was not mentioned at all last month, so never describe it as a rise from a specific earlier figure.\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s share relative to whichever competitor moved the most.`,
+      runsCompared
+        ? `${STYLE}\n\nSection: Competitor Share of Voice\nBrand: ${brand}\nPeriod: ${period}${what}\nShare of Voice (% of all brand mentions in AI answers), in the comparison then in ${d.period.label}: ${JSON.stringify(
+            d.competitors.map((x) => ({ brand: x.name, is_client: x.isClient, comparison_pct: r1(x.previousSovPct), current_pct: r1(x.currentSovPct) })),
+          )}\nA null comparison value means the brand was not mentioned at all in the comparison, so never describe it as a rise from a specific earlier figure.\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s share relative to whichever competitor moved the most.`
+        : `${STYLE}\n\nSection: Competitor Share of Voice\nBrand: ${brand}\nPeriod: ${d.period.label}${none("Share of Voice comparison")}\nShare of Voice (% of all brand mentions in AI answers) in ${d.period.label}: ${JSON.stringify(
+            d.competitors.map((x) => ({ brand: x.name, is_client: x.isClient, pct: r1(x.currentSovPct) })),
+          )}\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s share relative to the leading brands.`,
     ],
   ];
   if (d.citations) {
     jobs.push([
       "citations",
-      `${STYLE}\n\nSection: AI Citations (the web pages AI answers linked to as sources, from Live Search answers only)\nBrand: ${brand}\nPeriod: ${period}\nData: ${JSON.stringify({
+      `${STYLE}\n\nSection: AI Citations (the web pages AI answers linked to as sources, from Live Search answers only)\nBrand: ${brand}\nPeriod: ${d.citations.previous ? period : d.period.label}${d.citations.previous ? what : none("citation")}\nData: ${JSON.stringify({
         current: { answers: d.citations.current.answers, own_site_cited_pct: r1(d.citations.current.ownSitePct), sites_cited: d.citations.current.sitesCited },
-        previous: d.citations.previous && { answers: d.citations.previous.answers, own_site_cited_pct: r1(d.citations.previous.ownSitePct) },
-        top_sites: d.citations.topSites.map((s) => ({ site: s.domain, is_own_site: s.isOwn, share_pct: r1(s.sharePct), previous_share_pct: r1(s.previousSharePct) })),
-      })}\nField meanings: own_site_cited_pct = % of answers that linked to the brand's own website. share_pct = % of answers that cited that site. A null previous value means there were no Live Search answers last month, so nothing is a change over time.\n\nWrite the Key Takeaway sentence now, describing how often the brand's own site is cited and which sites AI cites most.`,
+        comparison: d.citations.previous && { answers: d.citations.previous.answers, own_site_cited_pct: r1(d.citations.previous.ownSitePct) },
+        top_sites: d.citations.topSites.map((s) => ({ site: s.domain, is_own_site: s.isOwn, share_pct: r1(s.sharePct), comparison_share_pct: r1(s.previousSharePct) })),
+      })}\nField meanings: own_site_cited_pct = % of answers that linked to the brand's own website. share_pct = % of answers that cited that site. A null comparison value means there were no Live Search answers in the comparison.\n\nWrite the Key Takeaway sentence now, describing how often the brand's own site is cited and which sites AI cites most.`,
     ]);
   }
   if (d.traffic) {
@@ -485,14 +726,17 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
         measured_ai_total: x.measuredAiTotal,
         all_sessions: x.sessions,
         days_with_data: x.days,
-        days_in_month: x.daysInMonth,
+        days_in_period: x.daysInPeriod,
       };
-    const partialNote = trafficIsPartial(d.traffic)
-      ? "\nAt least one month is missing days of data (compare days_with_data with days_in_month), so the monthly totals are not comparable. Never describe a total as rising or falling between the months. Describe this month's AI traffic and how many days of data it covers instead."
+    const prevLabel = c.trafficPeriod?.label ?? c.label;
+    const caveat = trafficCaveat(d.traffic, d.period.label, prevLabel);
+    const caveatNote = caveat
+      ? `\n${caveat} Never describe a total as rising or falling between the periods. Describe ${d.period.label}'s AI traffic and how many days of data it covers instead.`
       : "";
+    const trafficWhat = isBenchmark || c.kind === "firstCrawl" ? `\nThe comparison period is the ${d.traffic.current.daysInPeriod} days up to ${c.phrase}.` : "";
     jobs.push([
       "traffic",
-      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics sessions attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}\nPeriod: ${period}\nData: ${JSON.stringify({ previous: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_sessions = Google Analytics' own AI Assistant channel. referral_ai_sessions and unassigned_ai_sessions = sessions in those channels whose source names a known AI platform. measured_ai_total = the three added together. all_sessions = every session to the site. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${partialNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
+      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics sessions attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}\nPeriod: ${prevLabel} versus ${d.period.label}${trafficWhat}${d.traffic.previous ? "" : none("traffic")}\nData: ${JSON.stringify({ comparison: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_sessions = Google Analytics' own AI Assistant channel. referral_ai_sessions and unassigned_ai_sessions = sessions in those channels whose source names a known AI platform. measured_ai_total = the three added together. all_sessions = every session to the site. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${caveatNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
     ]);
   }
 
@@ -502,25 +746,27 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
   return out;
 }
 
-export async function generateMonthlyReport(
-  clientId: string,
-  month: string,
-): Promise<{ ok: true; id: string; month: string } | { ok: false; reason: "client_not_found" | "no_data" }> {
-  const data = await buildMonthlyReportData(clientId, month);
-  if (!data) return { ok: false, reason: "client_not_found" };
-  if (data.scorecard.current.checks === 0 && !data.traffic) return { ok: false, reason: "no_data" };
-  const takeaways = await writeTakeaways(data);
-  const row = await prisma.monthlyReport.upsert({
-    where: { clientId_month: { clientId, month } },
-    create: { clientId, month, data: data as unknown as object, takeaways },
-    update: { data: data as unknown as object, takeaways },
-  });
-  return { ok: true, id: row.id, month: row.month };
+/** "ISA benchmark (Mar 17, 2026)", "First crawl (Oct 12 – Oct 13, 2026)" or "September 2026", for lists. */
+export function compareListLabel(c: ReportComparison): string {
+  const s = c.phrase.replace(/^the /, "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Months (UTC, "YYYY-MM") that have at least one complete run, newest first. */
-export async function monthsWithRuns(clientId: string): Promise<string[]> {
-  const runs = await prisma.run.findMany({ where: { clientId, status: "COMPLETE" }, select: { startedAt: true } });
-  const months = new Set(runs.map((r) => `${r.startedAt.getUTCFullYear()}-${String(r.startedAt.getUTCMonth() + 1).padStart(2, "0")}`));
-  return [...months].sort().reverse();
+/** Generates a report, replacing any saved report for the same period (its link stays the same). */
+export async function generateMonthlyReport(
+  clientId: string,
+  period: ReportPeriod,
+  spec: CompareSpec,
+): Promise<{ ok: true; id: string } | { ok: false; reason: "client_not_found" | "compare_not_found" | "no_data" }> {
+  const data = await buildMonthlyReportData(clientId, period, spec);
+  if (typeof data === "string") return { ok: false, reason: data };
+  if (data.scorecard.current.checks === 0 && !data.traffic) return { ok: false, reason: "no_data" };
+  const takeaways = await writeTakeaways(data);
+  const fields = { data: data as unknown as object, takeaways, compareLabel: compareListLabel(data.compare) };
+  const row = await prisma.monthlyReport.upsert({
+    where: { clientId_periodStart_periodEnd: { clientId, periodStart: period.start, periodEnd: period.end } },
+    create: { clientId, periodStart: period.start, periodEnd: period.end, ...fields },
+    update: fields,
+  });
+  return { ok: true, id: row.id };
 }

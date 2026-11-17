@@ -2,7 +2,14 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { PrintButton } from "@/components/print-button";
-import { trafficIsPartial, type MonthlyReportData, type ReportTakeaways, type ScoreMetrics, type TrafficTotals } from "@/lib/monthly-report";
+import {
+  normalizeReportData,
+  trafficCaveat,
+  type CompareScore,
+  type ReportTakeaways,
+  type ScoreMetrics,
+  type TrafficTotals,
+} from "@/lib/monthly-report";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +22,8 @@ async function getReport(id: string) {
 
 export async function generateMetadata({ params }: { params: Promise<{ reportId: string }> }): Promise<Metadata> {
   const report = await getReport((await params).reportId);
-  const d = report?.data as unknown as MonthlyReportData | undefined;
-  return { title: d ? `${d.clientName}: GEO Report, ${d.monthLabel}` : "GEO Report" };
+  const d = report ? normalizeReportData(report.data) : undefined;
+  return { title: d ? `${d.clientName}: GEO Report, ${d.period.label}` : "GEO Report" };
 }
 
 const RED = "#EC1912";
@@ -88,7 +95,22 @@ function Takeaway({ text }: { text: string | undefined }) {
   );
 }
 
-function StatCard({ label, value, prev, delta }: { label: string; value: string; prev: string | null; delta: React.ReactNode }) {
+/** then: "in September 2026" / "at the ISA benchmark"; missing: the footer when there's no comparison figure. */
+function StatCard({
+  label,
+  value,
+  prev,
+  delta,
+  then,
+  missing,
+}: {
+  label: string;
+  value: string;
+  prev: string | null;
+  delta: React.ReactNode;
+  then: string;
+  missing: string;
+}) {
   return (
     <div className="rounded-lg border border-[#E8D8D8] px-4 py-3">
       <div className="text-[10px] font-bold tracking-wider text-zinc-500 uppercase">{label}</div>
@@ -96,10 +118,10 @@ function StatCard({ label, value, prev, delta }: { label: string; value: string;
       <div className="mt-0.5 text-[11px] text-zinc-500">
         {prev != null ? (
           <>
-            {prev} last month · {delta}
+            {prev} {then} · {delta}
           </>
         ) : (
-          "No data last month"
+          missing
         )}
       </div>
     </div>
@@ -119,13 +141,20 @@ function Table({ children }: { children: React.ReactNode }) {
   );
 }
 
-function scoreCards(cur: ScoreMetrics, prev: ScoreMetrics | null) {
+/**
+ * The scorecard tiles. A figure an imported benchmark doesn't have comes back
+ * as prev: null (the tile shows why); a figure a tracked period has but that
+ * was empty (e.g. no rank when never mentioned) shows "n/a".
+ */
+function scoreCards(cur: ScoreMetrics, prev: CompareScore | null, fromBenchmark: boolean) {
+  const then = <T,>(v: T | null | undefined, fmt: (x: T | null) => string) =>
+    !prev || (fromBenchmark && v == null) ? null : fmt(v ?? null);
   return [
-    { label: "Visibility", value: fmtPct(cur.visibilityPct), prev: prev && fmtPct(prev.visibilityPct), delta: <Delta cur={cur.visibilityPct} prev={prev?.visibilityPct} unit=" pts" /> },
-    { label: "Avg Rank When Found", value: fmtRank(cur.avgRankWhenFound), prev: prev && fmtRank(prev.avgRankWhenFound), delta: <Delta cur={cur.avgRankWhenFound} prev={prev?.avgRankWhenFound} unit="" lowerIsBetter /> },
-    { label: "#1 Rankings", value: fmtInt(cur.rank1Count), prev: prev && fmtInt(prev.rank1Count), delta: <Delta cur={cur.rank1Count} prev={prev?.rank1Count} unit="" digits={0} /> },
-    { label: "Top-3 Visibility", value: fmtPct(cur.top3Pct), prev: prev && fmtPct(prev.top3Pct), delta: <Delta cur={cur.top3Pct} prev={prev?.top3Pct} unit=" pts" /> },
-    { label: "Sentiment Score", value: fmtPct(cur.sentimentPct), prev: prev && fmtPct(prev.sentimentPct), delta: <Delta cur={cur.sentimentPct} prev={prev?.sentimentPct} unit=" pts" /> },
+    { label: "Visibility", value: fmtPct(cur.visibilityPct), prev: then(prev?.visibilityPct, fmtPct), delta: <Delta cur={cur.visibilityPct} prev={prev?.visibilityPct} unit=" pts" /> },
+    { label: "Avg Rank When Found", value: fmtRank(cur.avgRankWhenFound), prev: then(prev?.avgRankWhenFound, fmtRank), delta: <Delta cur={cur.avgRankWhenFound} prev={prev?.avgRankWhenFound} unit="" lowerIsBetter /> },
+    { label: "#1 Rankings", value: fmtInt(cur.rank1Count), prev: then(prev?.rank1Count, fmtInt), delta: <Delta cur={cur.rank1Count} prev={prev?.rank1Count} unit="" digits={0} /> },
+    { label: "Top-3 Visibility", value: fmtPct(cur.top3Pct), prev: then(prev?.top3Pct, fmtPct), delta: <Delta cur={cur.top3Pct} prev={prev?.top3Pct} unit=" pts" /> },
+    { label: "Sentiment Score", value: fmtPct(cur.sentimentPct), prev: then(prev?.sentimentPct, fmtPct), delta: <Delta cur={cur.sentimentPct} prev={prev?.sentimentPct} unit=" pts" /> },
   ];
 }
 
@@ -144,21 +173,32 @@ function TrafficRow({ label, cur, prev, showChange }: { label: string; cur: numb
   );
 }
 
-const coverage = (t: TrafficTotals, label: string) => `${t.days} of ${t.daysInMonth} days in ${label}`;
-
 export default async function MonthlyReportPage({ params }: { params: Promise<{ reportId: string }> }) {
   const { reportId } = await params;
   const report = await getReport(reportId);
   if (!report) notFound();
-  const d = report.data as unknown as MonthlyReportData;
+  const d = normalizeReportData(report.data);
   const t = report.takeaways as unknown as ReportTakeaways;
   const brand = d.brandName ?? d.clientName;
+  const c = d.compare;
+  const P = d.period.label;
+  const isBenchmark = c.kind === "benchmark";
   const cur = d.scorecard.current;
   const prev = d.scorecard.previous;
   const prevTraffic: TrafficTotals | null | undefined = d.traffic?.previous;
-  const trafficPartial = d.traffic ? trafficIsPartial(d.traffic) : false;
-  // No data last month: drop the "then" and change columns instead of filling them with n/a.
-  const hasPrev = !!prev;
+  const trafficLabel = c.trafficPeriod?.label ?? c.label;
+  const trafficNote = d.traffic ? trafficCaveat(d.traffic, P, trafficLabel) : null;
+  // How the comparison reads inside a sentence: "in September 2026", "at the ISA benchmark".
+  const then = isBenchmark ? `at the ${c.source} benchmark` : c.kind === "firstCrawl" ? "at the first crawl" : `in ${c.label}`;
+  const missing = isBenchmark ? "Not part of the benchmark" : `No data ${then}`;
+  // Nothing to compare with: drop the "then" and change columns instead of filling them with n/a.
+  // An imported benchmark has no per-platform or per-brand figures to line up with this period's.
+  const runsCompared = !isBenchmark && !!prev;
+  const cards = scoreCards(cur, prev, isBenchmark).map((card) =>
+    card.label === "Sentiment Score" && isBenchmark && c.sentimentScore != null
+      ? { ...card, missing: `${c.sentimentScore}/100 ${then}, on a different scale` }
+      : { ...card, missing },
+  );
   let n = 0;
 
   return (
@@ -177,7 +217,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
         <img src="/brand/interdependence-logo.jpg" alt="Interdependence" className="absolute top-[0.6in] left-[0.5in] w-[3in]" />
         <div className="mb-8 text-[11px] font-semibold tracking-[0.18em] text-white/80 uppercase">GEO Report</div>
         <h1 className="text-[44px] leading-tight font-bold tracking-tight">{d.clientName}</h1>
-        <p className="mt-2 text-[17px] text-white/85">AI Visibility Report for {d.monthLabel}</p>
+        <p className="mt-2 text-[17px] text-white/85">AI Visibility Report for {P}</p>
         <div className="my-10 h-[3px] w-[60px] bg-white" />
         <div className="space-y-2 text-[13px] text-white/85">
           {d.domain && (
@@ -186,7 +226,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
             </div>
           )}
           <div>
-            <strong className="text-white">Period:</strong> {d.monthLabel} compared with {d.previousMonthLabel}
+            <strong className="text-white">Period:</strong> {P} compared with {c.phrase}
           </div>
           <div>
             <strong className="text-white">AI platforms:</strong> {d.platforms.map((p) => p.label).join(", ") || "n/a"}
@@ -194,20 +234,20 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
         </div>
         <div className="absolute right-[0.7in] bottom-[0.6in] left-[0.7in] flex justify-between border-t border-white/35 pt-4 text-[11px] text-white/75">
           <span>Prepared by Interdependence</span>
-          <span>{d.monthLabel}</span>
+          <span>{P}</span>
         </div>
       </section>
 
       {/* Executive Scorecard */}
       <section className="rpt-page">
-        <SectionHeader n={++n} title="Executive Scorecard" sub={`How often AI answers mention ${brand}, ${d.monthLabel} compared with ${d.previousMonthLabel}.`} />
+        <SectionHeader n={++n} title="Executive Scorecard" sub={`How often AI answers mention ${brand}, ${P} compared with ${c.phrase}.`} />
         {cur.checks === 0 ? (
-          <p className="text-[13px] text-zinc-600">No AI answers were checked in {d.monthLabel}.</p>
+          <p className="text-[13px] text-zinc-600">No AI answers were checked in {P}.</p>
         ) : (
           <>
             <div className="grid grid-cols-3 gap-3">
-              {scoreCards(cur, prev).map((c) => (
-                <StatCard key={c.label} {...c} />
+              {cards.map((card) => (
+                <StatCard key={card.label} then={then} {...card} />
               ))}
               {d.citations && (
                 <StatCard
@@ -215,15 +255,18 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                   value={fmtPct(d.citations.current.ownSitePct)}
                   prev={d.citations.previous ? fmtPct(d.citations.previous.ownSitePct) : null}
                   delta={<Delta cur={d.citations.current.ownSitePct} prev={d.citations.previous?.ownSitePct} unit=" pts" />}
+                  then={then}
+                  missing={missing}
                 />
               )}
             </div>
             <Takeaway text={t.scorecard} />
             <p className="mt-6 text-[11px] leading-relaxed text-zinc-500">
               Based on {fmtInt(cur.checks)} AI answers from {d.runs.current.runs} tracking run
-              {d.runs.current.runs === 1 ? "" : "s"} in {d.monthLabel} ({d.runs.current.live} with live web search and{" "}
+              {d.runs.current.runs === 1 ? "" : "s"} in {P} ({d.runs.current.live} with live web search and{" "}
               {d.runs.current.training} from the AI&apos;s training data)
-              {prev ? `, compared with ${fmtInt(prev.checks)} answers in ${d.previousMonthLabel}` : ""}.
+              {prev?.checks != null ? `, compared with ${fmtInt(prev.checks)} answers ${then}` : ""}.
+              {isBenchmark && prev && ` The comparison figures are from ${c.phrase}.`}{" "}
               Visibility is the share of answers that mention {brand}. Top-3 Visibility is the share of all answers
               where {brand} is listed in the top 3. Sentiment Score is the share of mentions that are not negative.
             </p>
@@ -234,35 +277,40 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {/* Platforms */}
       {d.platforms.length > 0 && (
         <section className="rpt-page">
-          <SectionHeader n={++n} title="Visibility by AI Platform" sub="How each AI platform's answers treated the brand this month and last." />
+          <SectionHeader
+            n={++n}
+            title="Visibility by AI Platform"
+            sub={runsCompared ? `How each AI platform's answers treated the brand in ${P} and ${then}.` : `How each AI platform's answers treated the brand in ${P}.`}
+          />
           <Table>
             <thead className="bg-[#FAF5F5]">
               <tr>
                 <th className={th}>Platform</th>
-                {hasPrev && <th className={thR}>{d.previousMonthLabel}</th>}
-                <th className={thR}>{hasPrev ? d.monthLabel : "Visibility"}</th>
-                {hasPrev && <th className={thR}>Change</th>}
-                {hasPrev && <th className={thR}>Avg Rank Then</th>}
-                <th className={thR}>{hasPrev ? "Avg Rank Now" : "Avg Rank When Found"}</th>
+                {runsCompared && <th className={thR}>{c.label}</th>}
+                <th className={thR}>{runsCompared ? P : "Visibility"}</th>
+                {runsCompared && <th className={thR}>Change</th>}
+                {runsCompared && <th className={thR}>Avg Rank Then</th>}
+                <th className={thR}>{runsCompared ? "Avg Rank Now" : "Avg Rank When Found"}</th>
               </tr>
             </thead>
             <tbody>
               {d.platforms.map((p) => (
                 <tr key={p.platform} className="border-t border-[#F0E6E6]">
                   <td className={`${td} font-semibold`}>{p.label}</td>
-                  {hasPrev && <td className={tdR}>{fmtPct(p.previous?.visibilityPct)}</td>}
+                  {runsCompared && <td className={tdR}>{fmtPct(p.previous?.visibilityPct)}</td>}
                   <td className={`${tdR} font-semibold`}>{fmtPct(p.current?.visibilityPct)}</td>
-                  {hasPrev && (
+                  {runsCompared && (
                     <td className={tdR}>
                       <Delta cur={p.current?.visibilityPct} prev={p.previous?.visibilityPct} unit=" pts" />
                     </td>
                   )}
-                  {hasPrev && <td className={tdR}>{fmtRank(p.previous?.avgRank)}</td>}
+                  {runsCompared && <td className={tdR}>{fmtRank(p.previous?.avgRank)}</td>}
                   <td className={tdR}>{fmtRank(p.current?.avgRank)}</td>
                 </tr>
               ))}
             </tbody>
           </Table>
+          {isBenchmark && <p className="mt-2 text-[11px] text-zinc-500">The benchmark has no per-platform figures to compare with.</p>}
           <Takeaway text={t.platforms} />
         </section>
       )}
@@ -272,26 +320,26 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
         <section className="rpt-page">
           <SectionHeader n={++n} title="Prompt Movement" sub={`Where ${brand} gained ground across the ${d.prompts.tracked} tracked prompts, and where a competitor still leads.`} />
           {[
-            { title: "New Wins", note: "Not mentioned last month, mentioned now.", rows: d.prompts.newWins, watch: false },
-            { title: "Rank Gains", note: "Mentioned both months, with a better best rank now.", rows: d.prompts.rankGains, watch: false },
+            { title: "New Wins", note: `Not mentioned ${then}, mentioned now.`, rows: d.prompts.newWins, watch: false },
+            { title: "Rank Gains", note: `Mentioned ${then} and now, with a better best rank now.`, rows: d.prompts.rankGains, watch: false },
             { title: "Watchlist", note: "Mentioned, but another brand holds the #1 spot.", rows: d.prompts.watchlist, watch: true },
           ].map((b) => (
             <div key={b.title} className="mb-5">
               <h3 className="text-[13px] font-bold text-[#1E1E1E]">
-                {b.title} {(hasPrev || b.watch) && <span className="font-normal text-zinc-500">({b.rows.length})</span>}
+                {b.title} {(d.prompts.compared || b.watch) && <span className="font-normal text-zinc-500">({b.rows.length})</span>}
               </h3>
               <p className="mb-2 text-[11px] text-zinc-500">{b.note}</p>
-              {!hasPrev && !b.watch ? (
-                <p className="text-[12px] text-zinc-500">No {d.previousMonthLabel} data to compare with yet.</p>
+              {!d.prompts.compared && !b.watch ? (
+                <p className="text-[12px] text-zinc-500">No prompt results {then} to compare with.</p>
               ) : b.rows.length === 0 ? (
-                <p className="text-[12px] text-zinc-500">None this month.</p>
+                <p className="text-[12px] text-zinc-500">None in {P}.</p>
               ) : (
                 <Table>
                   <thead className="bg-[#FAF5F5]">
                     <tr>
                       <th className={th}>Prompt</th>
-                      {hasPrev && <th className={thR}>Best Rank Then</th>}
-                      <th className={thR}>{hasPrev ? "Best Rank Now" : "Best Rank"}</th>
+                      {d.prompts.compared && <th className={thR}>Best Rank Then</th>}
+                      <th className={thR}>{d.prompts.compared ? "Best Rank Now" : "Best Rank"}</th>
                       {b.watch && <th className={th}>Most Often #1</th>}
                     </tr>
                   </thead>
@@ -299,7 +347,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                     {b.rows.slice(0, 12).map((m) => (
                       <tr key={m.text} className="border-t border-[#F0E6E6]">
                         <td className={td}>{m.text}</td>
-                        {hasPrev && <td className={tdR}>{m.previouslyTracked ? fmtBest(m.previousBestRank) : "n/a"}</td>}
+                        {d.prompts.compared && <td className={tdR}>{m.previouslyTracked ? fmtBest(m.previousBestRank) : "n/a"}</td>}
                         <td className={`${tdR} font-semibold`}>{fmtBest(m.currentBestRank)}</td>
                         {b.watch && <td className={td}>{m.outrankedBy ?? "n/a"}</td>}
                       </tr>
@@ -317,37 +365,65 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {/* Competitors */}
       {d.competitors.length > 0 && (
         <section className="rpt-page">
-          <SectionHeader n={++n} title="Competitor Share of Voice" sub="Each brand's share of all brand mentions in AI answers, for the most mentioned brands this month." />
+          <SectionHeader n={++n} title="Competitor Share of Voice" sub={`Each brand's share of all brand mentions in AI answers, for the most mentioned brands in ${P}.`} />
           <Table>
             <thead className="bg-[#FAF5F5]">
               <tr>
                 <th className={th}>Brand</th>
-                {hasPrev && <th className={thR}>{d.previousMonthLabel}</th>}
-                <th className={thR}>{hasPrev ? d.monthLabel : "Share of Voice"}</th>
-                {hasPrev && <th className={thR}>Change</th>}
+                {runsCompared && <th className={thR}>{c.label}</th>}
+                <th className={thR}>{runsCompared ? P : "Share of Voice"}</th>
+                {runsCompared && <th className={thR}>Change</th>}
                 <th className={thR}>Visibility</th>
               </tr>
             </thead>
             <tbody>
-              {d.competitors.map((c) => (
-                <tr key={c.name} className={`border-t border-[#F0E6E6] ${c.isClient ? "bg-[#FDECEC] font-semibold" : ""}`}>
-                  <td className={td}>{c.name}</td>
-                  {hasPrev && <td className={tdR}>{c.previousSovPct == null ? "Not mentioned" : fmtPct(c.previousSovPct)}</td>}
-                  <td className={tdR}>{fmtPct(c.currentSovPct)}</td>
-                  {hasPrev && (
+              {d.competitors.map((row) => (
+                <tr key={row.name} className={`border-t border-[#F0E6E6] ${row.isClient ? "bg-[#FDECEC] font-semibold" : ""}`}>
+                  <td className={td}>{row.name}</td>
+                  {runsCompared && <td className={tdR}>{row.previousSovPct == null ? "Not mentioned" : fmtPct(row.previousSovPct)}</td>}
+                  <td className={tdR}>{fmtPct(row.currentSovPct)}</td>
+                  {runsCompared && (
                     <td className={tdR}>
-                      <Delta cur={c.currentSovPct} prev={c.previousSovPct} unit=" pts" />
+                      <Delta cur={row.currentSovPct} prev={row.previousSovPct} unit=" pts" />
                     </td>
                   )}
-                  <td className={tdR}>{fmtPct(c.currentVisibilityPct)}</td>
+                  <td className={tdR}>{fmtPct(row.currentVisibilityPct)}</td>
                 </tr>
               ))}
             </tbody>
           </Table>
           <p className="mt-2 text-[11px] text-zinc-500">
-            Visibility is the share of this month&apos;s AI answers that mention the brand.
+            Visibility is the share of {P}&apos;s AI answers that mention the brand.
           </p>
           <Takeaway text={t.competitors} />
+          {isBenchmark && c.competitors && c.competitors.length > 0 && (
+            <div className="mt-8">
+              <h3 className="mb-1 text-[13px] font-bold text-[#1E1E1E]">
+                At the {c.source} Benchmark ({c.date})
+              </h3>
+              <p className="mb-2 text-[11px] text-zinc-500">The competitors the benchmark measured, as it listed them.</p>
+              <Table>
+                <thead className="bg-[#FAF5F5]">
+                  <tr>
+                    <th className={th}>Competitor</th>
+                    <th className={thR}>Share of Voice</th>
+                    <th className={thR}>Visibility</th>
+                    <th className={thR}>Avg Position</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.competitors.map((row) => (
+                    <tr key={row.name} className="border-t border-[#F0E6E6]">
+                      <td className={td}>{row.name}</td>
+                      <td className={tdR}>{fmtPct(row.sharePct)}</td>
+                      <td className={tdR}>{fmtPct(row.visibilityPct)}</td>
+                      <td className={tdR}>{fmtRank(row.position)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
+          )}
         </section>
       )}
 
@@ -361,9 +437,18 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
               value={fmtPct(d.citations.current.ownSitePct)}
               prev={d.citations.previous ? fmtPct(d.citations.previous.ownSitePct) : null}
               delta={<Delta cur={d.citations.current.ownSitePct} prev={d.citations.previous?.ownSitePct} unit=" pts" />}
+              then={then}
+              missing={missing}
             />
-            <StatCard label="Live Search Answers" value={fmtInt(d.citations.current.answers)} prev={d.citations.previous ? fmtInt(d.citations.previous.answers) : null} delta={<Delta cur={d.citations.current.answers} prev={d.citations.previous?.answers} unit="" digits={0} />} />
-            <StatCard label="Sites Cited" value={fmtInt(d.citations.current.sitesCited)} prev={null} delta={null} />
+            <StatCard
+              label="Live Search Answers"
+              value={fmtInt(d.citations.current.answers)}
+              prev={d.citations.previous ? fmtInt(d.citations.previous.answers) : null}
+              delta={<Delta cur={d.citations.current.answers} prev={d.citations.previous?.answers} unit="" digits={0} />}
+              then={then}
+              missing={missing}
+            />
+            <StatCard label="Sites Cited" value={fmtInt(d.citations.current.sitesCited)} prev={null} delta={null} then={then} missing={`In ${P}`} />
           </div>
           {/* Takeaway up top here: this section runs long, and at the bottom it could land alone on the next sheet. */}
           <div className="mb-5">
@@ -433,34 +518,33 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                 <thead className="bg-[#FAF5F5]">
                   <tr>
                     <th className={th}>Source</th>
-                    <th className={thR}>{d.previousMonthLabel}</th>
-                    <th className={thR}>{d.monthLabel}</th>
-                    {!trafficPartial && <th className={thR}>Change</th>}
+                    <th className={thR}>{trafficLabel}</th>
+                    <th className={thR}>{P}</th>
+                    {!trafficNote && <th className={thR}>Change</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  <TrafficRow label="AI Assistant channel" cur={d.traffic.current.aiAssistant} prev={prevTraffic?.aiAssistant} showChange={!trafficPartial} />
-                  <TrafficRow label="Referrals from AI platforms" cur={d.traffic.current.referralAi} prev={prevTraffic?.referralAi} showChange={!trafficPartial} />
-                  <TrafficRow label="Unassigned visits from AI platforms" cur={d.traffic.current.unassignedAi} prev={prevTraffic?.unassignedAi} showChange={!trafficPartial} />
-                  <TrafficRow label="Measured AI visits, total" cur={d.traffic.current.measuredAiTotal} prev={prevTraffic?.measuredAiTotal} showChange={!trafficPartial} />
-                  <TrafficRow label="All website sessions" cur={d.traffic.current.sessions} prev={prevTraffic?.sessions} showChange={!trafficPartial} />
+                  <TrafficRow label="AI Assistant channel" cur={d.traffic.current.aiAssistant} prev={prevTraffic?.aiAssistant} showChange={!trafficNote} />
+                  <TrafficRow label="Referrals from AI platforms" cur={d.traffic.current.referralAi} prev={prevTraffic?.referralAi} showChange={!trafficNote} />
+                  <TrafficRow label="Unassigned visits from AI platforms" cur={d.traffic.current.unassignedAi} prev={prevTraffic?.unassignedAi} showChange={!trafficNote} />
+                  <TrafficRow label="Measured AI visits, total" cur={d.traffic.current.measuredAiTotal} prev={prevTraffic?.measuredAiTotal} showChange={!trafficNote} />
+                  <TrafficRow label="All website sessions" cur={d.traffic.current.sessions} prev={prevTraffic?.sessions} showChange={!trafficNote} />
                   {d.traffic.current.gscClicks != null && (
-                    <TrafficRow label="Google Search clicks" cur={d.traffic.current.gscClicks} prev={prevTraffic?.gscClicks} showChange={!trafficPartial} />
+                    <TrafficRow label="Google Search clicks" cur={d.traffic.current.gscClicks} prev={prevTraffic?.gscClicks} showChange={!trafficNote} />
                   )}
                 </tbody>
               </Table>
-              {trafficPartial && (
-                <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-                  Google Analytics data covers {coverage(d.traffic.current, d.monthLabel)}
-                  {prevTraffic ? ` and ${coverage(prevTraffic, d.previousMonthLabel)}` : ""}, so the monthly totals
-                  can&apos;t be compared directly.
+              {(isBenchmark || c.kind === "firstCrawl") && c.trafficPeriod && (
+                <p className="mt-2 text-[11px] text-zinc-500">
+                  {c.trafficPeriod.label} is the {d.traffic.current.daysInPeriod} days up to {c.phrase}.
                 </p>
               )}
+              {trafficNote && <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-900">{trafficNote}</p>}
               <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
                 Direct visits arrive with no referrer, so AI visits among them can&apos;t be measured. Industry research
                 puts 21% to 47% of Direct visits as AI-referred, which would mean about{" "}
-                {fmtInt(d.traffic.current.directAiEstimate.low)} to {fmtInt(d.traffic.current.directAiEstimate.high)} of
-                this month&apos;s {fmtInt(d.traffic.current.direct)} Direct visits. That range is an estimate, not a
+                {fmtInt(d.traffic.current.directAiEstimate.low)} to {fmtInt(d.traffic.current.directAiEstimate.high)} of{" "}
+                {P}&apos;s {fmtInt(d.traffic.current.direct)} Direct visits. That range is an estimate, not a
                 measurement. Visits from Google&apos;s AI Overviews are counted as ordinary Google Search traffic and
                 can&apos;t be separated.
               </p>

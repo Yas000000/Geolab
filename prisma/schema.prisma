@@ -154,13 +154,16 @@ model MonthlyReport {
   id        String   @id @default(cuid())
   clientId  String
   client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  month     String   // "YYYY-MM", UTC calendar month
-  data      Json
-  takeaways Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  periodStart  String // "YYYY-MM-DD", first UTC day reported
+  periodEnd    String // "YYYY-MM-DD", last UTC day reported (inclusive)
+  compareLabel String @default("") // what it was compared with, for the Saved Reports list
+  data         Json
+  takeaways    Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  @@unique([clientId, month])
+  // One saved report per period: regenerating replaces it and keeps its link.
+  @@unique([clientId, periodStart, periodEnd])
 }
 
 // One AI crawler access check of a client's site (python_pipeline/crawlability.py):
