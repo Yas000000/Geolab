@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { competitorStats } from "@/lib/competitor-table";
 import { ModelFilter } from "@/components/model-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
@@ -393,64 +394,21 @@ function buildDashboardData(
   const comparisonMentioned = comparisonMatching.filter((r) => r.parsedResult?.clientBrandMentioned).length;
   const comparisonHeadlineVisibility = comparisonTotal ? (comparisonMentioned / comparisonTotal) * 100 : null;
 
-  const brandAcc = new Map<
-    string,
-    { name: string; isClientBrand: boolean; appearances: number; positions: number[]; comparisonCount: number }
-  >();
-
-  function tally(responses: RawResponseData[], countsTowardAppearances: boolean) {
-    for (const r of responses) {
-      for (const m of r.parsedResult?.mentions ?? []) {
-        const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
-        const existing = brandAcc.get(key);
-        const name = m.brand?.name ?? m.rawLabel;
-        const isClientBrand = m.brand?.isClientBrand ?? false;
-        if (existing) {
-          if (countsTowardAppearances) {
-            existing.appearances += 1;
-            if (m.position != null) existing.positions.push(m.position);
-          } else {
-            existing.comparisonCount += 1;
-          }
-        } else {
-          brandAcc.set(key, {
-            name,
-            isClientBrand,
-            appearances: countsTowardAppearances ? 1 : 0,
-            positions: countsTowardAppearances && m.position != null ? [m.position] : [],
-            comparisonCount: countsTowardAppearances ? 0 : 1,
-          });
-        }
-      }
-    }
-  }
-  tally(primaryMatching, true);
-  if (comparisonRange) tally(comparisonMatching, false);
-
   const hasComparison = !!comparisonRange && comparisonTotal > 0;
 
-  const brandTable: BrandRow[] = Array.from(brandAcc.entries())
-    .filter(([, b]) => b.appearances > 0)
-    .map(([key, b]) => {
-      const visibilityPct = totalResponses ? (b.appearances / totalResponses) * 100 : 0;
-      let delta: number | null = null;
-      if (hasComparison) {
-        const comparisonPct = (b.comparisonCount / comparisonTotal) * 100;
-        delta = visibilityPct - comparisonPct;
-      }
-      return {
-        key,
-        name: b.name,
-        isClientBrand: b.isClientBrand,
-        appearances: b.appearances,
-        avgPosition: b.positions.length
-          ? b.positions.reduce((a, c) => a + c, 0) / b.positions.length
-          : null,
-        visibilityPct,
-        delta,
-      };
-    })
-    .sort((a, b) => b.appearances - a.appearances);
+  // Same formulas as the client report's competitor table (src/lib/competitor-table.ts).
+  const comparisonVisibility = hasComparison
+    ? new Map(competitorStats(comparisonMatching).map((s) => [s.key, s.visibilityPct]))
+    : null;
+  const brandTable: BrandRow[] = competitorStats(primaryMatching).map((s) => ({
+    key: s.key,
+    name: s.name,
+    isClientBrand: s.isClientBrand,
+    appearances: s.appearances,
+    avgPosition: s.avgPosition,
+    visibilityPct: s.visibilityPct,
+    delta: comparisonVisibility ? s.visibilityPct - (comparisonVisibility.get(s.key) ?? 0) : null,
+  }));
 
   // Competitor rank by crawl (the bump chart above the Competitors table):
   // each brand's rank within each crawl alone, by mentions -- same brand keys

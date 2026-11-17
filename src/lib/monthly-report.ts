@@ -3,6 +3,7 @@ import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 import { citationTrackedRuns, isLiveSearchModel, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { CRAWL_VENDOR_LABEL, latestCrawlCheck } from "@/lib/crawl-check";
+import { competitorStats, matchBenchmarkNames, nameKeys } from "@/lib/competitor-table";
 import {
   daysLabel,
   isoDay,
@@ -39,7 +40,8 @@ export interface PlatformRow {
   platform: string;
   label: string;
   current: { checks: number; visibilityPct: number; avgRank: number | null } | null;
-  previous: { checks: number; visibilityPct: number; avgRank: number | null } | null;
+  // Against an imported benchmark this is the benchmark's all-platform figure (checks: null).
+  previous: { checks: number | null; visibilityPct: number; avgRank: number | null } | null;
 }
 
 export interface PromptMove {
@@ -50,12 +52,20 @@ export interface PromptMove {
   outrankedBy?: string | null; // the brand most often at #1 when the client wasn't
 }
 
+/** One brand's figures, as the GEO Rankings tab's Competitors table computes them. */
+export interface CompetitorFigures {
+  position: number | null; // average list position when mentioned
+  visibilityPct: number | null; // mentions / answers
+  sharePct: number | null; // mentions / all brands' mentions
+}
+
 export interface CompetitorRow {
   name: string;
   isClient: boolean;
-  currentSovPct: number;
-  previousSovPct: number | null; // null = not mentioned at all in the comparison
-  currentVisibilityPct: number;
+  rank: number | null; // by mentions in the report period, as on the Rankings tab; null = not mentioned
+  current: CompetitorFigures | null; // null = not mentioned in the report period
+  previous: CompetitorFigures | null; // null = nothing to compare (an imported benchmark lists only its top competitors)
+  benchmarkName: string | null; // what an imported benchmark called it, e.g. "mcleanhospital.org"
 }
 
 export interface CitationSection {
@@ -85,6 +95,7 @@ export interface BenchmarkCompetitorRow {
   sharePct: number | null;
   visibilityPct: number | null;
   position: number | null;
+  shownAs?: string | null; // the tracked brand it matched, as named in the report's competitor table
 }
 
 export interface ReportComparison {
@@ -124,26 +135,49 @@ export interface MonthlyReportData {
 export type ReportTakeaways = Partial<Record<"scorecard" | "platforms" | "prompts" | "competitors" | "citations" | "traffic", string>>;
 
 /**
- * Reports saved before custom periods (2026-11-17) stored one month against
- * the month before, with month/monthLabel/previousMonth fields. Maps them to
- * the current shape so they still open.
+ * Saved reports in older shapes, mapped to the current one so they still open:
+ * - before custom periods (2026-11-17): one month against the month before,
+ *   with month/monthLabel/previousMonth fields and daysInMonth;
+ * - before the Rankings-style competitor table (reports from dff78ff):
+ *   competitor rows of currentSovPct/previousSovPct/currentVisibilityPct.
  */
 type LegacyTraffic = Omit<TrafficTotals, "daysInPeriod"> & { daysInMonth: number };
-type LegacyReport = Omit<MonthlyReportData, "period" | "compare" | "prompts" | "traffic"> & {
+type LegacyCompetitor = { name: string; isClient: boolean; currentSovPct: number; previousSovPct: number | null; currentVisibilityPct: number };
+type LegacyReport = Omit<MonthlyReportData, "period" | "compare" | "prompts" | "traffic" | "competitors"> & {
   month: string;
   previousMonth: string;
   prompts: Omit<MonthlyReportData["prompts"], "compared">;
+  competitors: LegacyCompetitor[];
   traffic: { current: LegacyTraffic; previous: LegacyTraffic | null } | null;
 };
 
 export function normalizeReportData(raw: unknown): MonthlyReportData {
-  if ((raw as MonthlyReportData).period) return raw as MonthlyReportData;
-  const { month, previousMonth, ...r } = raw as LegacyReport;
+  const d = (raw as MonthlyReportData).period ? (raw as MonthlyReportData) : fromMonthReport(raw as LegacyReport);
+  // Old competitor rows compared Share of Voice only, and only with tracked runs.
+  const compared = d.compare.kind !== "benchmark" && !!d.scorecard.previous;
+  const competitors = (d.competitors as (CompetitorRow | LegacyCompetitor)[]).map((x, i): CompetitorRow =>
+    "currentSovPct" in x
+      ? {
+          name: x.name,
+          isClient: x.isClient,
+          rank: i + 1,
+          current: { position: null, visibilityPct: x.currentVisibilityPct, sharePct: x.currentSovPct },
+          previous: compared ? { position: null, visibilityPct: null, sharePct: x.previousSovPct ?? 0 } : null,
+          benchmarkName: null,
+        }
+      : x,
+  );
+  return { ...d, competitors };
+}
+
+function fromMonthReport(raw: LegacyReport): MonthlyReportData {
+  const { month, previousMonth, competitors, ...r } = raw;
   const period = monthPeriod(month);
   const prev = monthPeriod(previousMonth);
   const fix = ({ daysInMonth, ...t }: LegacyTraffic): TrafficTotals => ({ ...t, daysInPeriod: daysInMonth });
   return {
     ...r,
+    competitors: competitors as unknown as CompetitorRow[], // mapped by normalizeReportData
     period,
     compare: {
       kind: "previous",
@@ -310,40 +344,70 @@ function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
   };
 }
 
-function competitorRows(current: Check[], previous: Check[]): CompetitorRow[] {
-  const tally = (checks: Check[]) => {
-    const mentions = new Map<string, { name: string; isClient: boolean; count: number; checks: Set<Check> }>();
-    let total = 0;
-    for (const c of checks) {
-      for (const m of c.parsedResult?.mentions ?? []) {
-        const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
-        const e = mentions.get(key) ?? { name: m.brand?.name ?? m.rawLabel, isClient: !!m.brand?.isClientBrand, count: 0, checks: new Set() };
-        e.count += 1;
-        e.checks.add(c);
-        mentions.set(key, e);
-        total += 1;
+/** Competitor rows shown in the report: the Rankings tab's top brands, plus the client. */
+export const COMPETITOR_ROWS = 15;
+
+/** An imported benchmark's competitor list matched to tracked brands, and the client's own benchmark figures. */
+interface BenchmarkForRows {
+  list: BenchmarkCompetitorRow[];
+  matches: Map<string, string>; // benchmark name -> brand id
+  client: CompetitorFigures | null;
+}
+
+/**
+ * The Rankings tab's Competitors table for the report period, with each
+ * brand's figures in the comparison: from the comparison's answers (a brand
+ * they never mention is a real 0), or from an imported benchmark's own
+ * competitor list (matched to tracked brands by name or website; a brand
+ * outside that list has no comparison figure).
+ */
+function competitorRows(
+  current: Check[],
+  previous: Check[] | null,
+  benchmark: BenchmarkForRows | null,
+): CompetitorRow[] {
+  const cur = competitorStats(current);
+  const rankOf = new Map(cur.map((s, i) => [s.key, i + 1]));
+  const figures = (s: { avgPosition: number | null; visibilityPct: number; sharePct: number }): CompetitorFigures => ({
+    position: s.avgPosition,
+    visibilityPct: s.visibilityPct,
+    sharePct: s.sharePct,
+  });
+  const prev = previous && previous.length ? new Map(competitorStats(previous).map((s) => [s.key, s])) : null;
+  // Benchmark rows by the brand they matched (the first, i.e. largest share, wins if two match one brand).
+  const fromBenchmark = new Map<string, BenchmarkCompetitorRow>();
+  for (const b of benchmark?.list ?? []) {
+    const id = benchmark!.matches.get(b.name);
+    if (id && !fromBenchmark.has(id)) fromBenchmark.set(id, b);
+  }
+
+  const keys = cur.slice(0, COMPETITOR_ROWS).map((s) => s.key);
+  const client = cur.find((s) => s.isClientBrand);
+  if (client && !keys.includes(client.key)) keys.push(client.key);
+  for (const id of fromBenchmark.keys()) if (rankOf.has(id) && !keys.includes(id)) keys.push(id);
+
+  const byKey = new Map(cur.map((s) => [s.key, s]));
+  return keys
+    .map((key) => {
+      const s = byKey.get(key)!;
+      const b = fromBenchmark.get(key);
+      let previousFigures: CompetitorFigures | null = null;
+      if (b) previousFigures = { position: b.position, visibilityPct: b.visibilityPct, sharePct: b.sharePct };
+      else if (s.isClientBrand && benchmark?.client) previousFigures = benchmark.client;
+      else if (prev) {
+        const p = prev.get(key);
+        previousFigures = p ? figures(p) : { position: null, visibilityPct: 0, sharePct: 0 };
       }
-    }
-    return { mentions, total };
-  };
-  const cur = tally(current);
-  const prev = tally(previous);
-  const rows = [...cur.mentions.entries()]
-    .map(([key, e]) => {
-      const p = prev.mentions.get(key);
       return {
-        name: e.name,
-        isClient: e.isClient,
-        currentSovPct: pct(e.count, cur.total),
-        previousSovPct: p ? pct(p.count, prev.total) : null,
-        currentVisibilityPct: pct(e.checks.size, current.length),
+        name: s.name,
+        isClient: s.isClientBrand,
+        rank: rankOf.get(key) ?? null,
+        current: figures(s),
+        previous: previousFigures,
+        benchmarkName: b && nameKeys(b.name)[0] !== nameKeys(s.name)[0] ? b.name : null,
       };
     })
-    .sort((a, b) => b.currentSovPct - a.currentSovPct);
-  const top = rows.slice(0, 10);
-  const client = rows.find((r) => r.isClient);
-  if (client && !top.includes(client)) top.push(client);
-  return top;
+    .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9));
 }
 
 function citationSection(current: RunRows, previous: RunRows, ownDomain: string | null): CitationSection | null {
@@ -572,6 +636,35 @@ export async function buildMonthlyReportData(
   const prevChecks = compare.runs.flatMap((r) => r.rawResponses);
   const fromRuns = compare.info.kind !== "benchmark";
 
+  // An imported benchmark names competitors its own way (often by website): match them to tracked brands.
+  // The client's own row compares with the benchmark's own figures (it has no share of voice for the client).
+  let benchmark: BenchmarkForRows | null = null;
+  if (!fromRuns) {
+    const s = compare.score;
+    benchmark = {
+      list: [],
+      matches: new Map(),
+      client: s && (s.visibilityPct != null || s.avgRankWhenFound != null)
+        ? { position: s.avgRankWhenFound, visibilityPct: s.visibilityPct, sharePct: null }
+        : null,
+    };
+  }
+  if (benchmark && compare.info.competitors?.length) {
+    const brands = await prisma.brand.findMany({
+      where: { clientId },
+      select: { id: true, name: true, aliases: { select: { alias: true } } },
+    });
+    const weight = new Map(competitorStats(curChecks).map((s) => [s.key, s.appearances]));
+    const matches = matchBenchmarkNames(
+      compare.info.competitors.map((c) => c.name),
+      brands.map((b) => ({ id: b.id, name: b.name, aliases: b.aliases.map((a) => a.alias) })),
+      weight,
+    );
+    const nameOf = new Map(brands.map((b) => [b.id, b.name]));
+    compare.info.competitors = compare.info.competitors.map((c) => ({ ...c, shownAs: nameOf.get(matches.get(c.name) ?? "") ?? null }));
+    benchmark = { ...benchmark, list: compare.info.competitors, matches };
+  }
+
   return {
     period,
     compare: compare.info,
@@ -583,9 +676,18 @@ export async function buildMonthlyReportData(
       current: scoreMetrics(curChecks),
       previous: fromRuns ? (prevChecks.length ? scoreMetrics(prevChecks) : null) : compare.score,
     },
-    platforms: platformRows(curChecks, prevChecks),
+    platforms: fromRuns
+      ? platformRows(curChecks, prevChecks)
+      : platformRows(curChecks, []).map((p) => ({
+          ...p,
+          // An imported benchmark has one all-platform figure: every platform is compared with it.
+          previous:
+            compare.score?.visibilityPct != null
+              ? { checks: null, visibilityPct: compare.score.visibilityPct, avgRank: compare.score.avgRankWhenFound }
+              : null,
+        })),
     prompts: promptMoves(curChecks, fromRuns ? (prevChecks.length ? promptsThen(prevChecks) : null) : compare.prompts),
-    competitors: competitorRows(curChecks, prevChecks),
+    competitors: competitorRows(curChecks, fromRuns ? prevChecks : null, benchmark),
     citations: citationSection(curRuns, compare.runs, siteDomain(client.domain)),
     traffic: curTraffic ? { current: curTraffic, previous: prevTraffic } : null,
     crawl: crawl
@@ -655,7 +757,10 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
       : "";
   const none = (label: string) => `\nThere is no ${label} data to compare with, so nothing here is a change over time. Never describe a number as rising, falling or improving.`;
   const hasPrev = !!d.scorecard.previous;
-  const runsCompared = !isBenchmark && hasPrev;
+  const platformsCompared = d.platforms.some((p) => p.previous);
+  const competitorsCompared = d.competitors.some((x) => x.previous);
+  const figuresForPrompt = (f: CompetitorFigures | null) =>
+    f && { position: r1(f.position), visibility_pct: r1(f.visibilityPct), share_of_voice_pct: r1(f.sharePct) };
   const metrics = (m: CompareScore | null) =>
     m && {
       visibility_pct: r1(m.visibilityPct),
@@ -674,11 +779,11 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     ],
     [
       "platforms",
-      runsCompared
-        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
+      platformsCompared
+        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}${isBenchmark ? "\nThe benchmark has one figure for all platforms combined, so it is the comparison for every platform." : ""}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
             d.platforms.map((p) => ({
               platform: p.label,
-              comparison_answers: p.previous?.checks ?? 0,
+              ...(isBenchmark ? {} : { comparison_answers: p.previous?.checks ?? 0 }),
               current_answers: p.current?.checks ?? 0,
               comparison_visibility_pct: r1(p.previous?.visibilityPct),
               current_visibility_pct: r1(p.current?.visibilityPct),
@@ -698,13 +803,13 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     ],
     [
       "competitors",
-      runsCompared
-        ? `${STYLE}\n\nSection: Competitor Share of Voice\nBrand: ${brand}\nPeriod: ${period}${what}\nShare of Voice (% of all brand mentions in AI answers), in the comparison then in ${d.period.label}: ${JSON.stringify(
-            d.competitors.map((x) => ({ brand: x.name, is_client: x.isClient, comparison_pct: r1(x.previousSovPct), current_pct: r1(x.currentSovPct) })),
-          )}\nA null comparison value means the brand was not mentioned at all in the comparison, so never describe it as a rise from a specific earlier figure.\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s share relative to whichever competitor moved the most.`
-        : `${STYLE}\n\nSection: Competitor Share of Voice\nBrand: ${brand}\nPeriod: ${d.period.label}${none("Share of Voice comparison")}\nShare of Voice (% of all brand mentions in AI answers) in ${d.period.label}: ${JSON.stringify(
-            d.competitors.map((x) => ({ brand: x.name, is_client: x.isClient, pct: r1(x.currentSovPct) })),
-          )}\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s share relative to the leading brands.`,
+      competitorsCompared
+        ? `${STYLE}\n\nSection: Competitors\nBrand: ${brand}\nPeriod: ${period}${what}\nEach brand's rank (by mentions in ${d.period.label}), then its average list position (lower is better), visibility % (share of AI answers mentioning it) and Share of Voice % (share of all brand mentions), in the comparison then in ${d.period.label}: ${JSON.stringify(
+            d.competitors.map((x) => ({ rank: x.rank, brand: x.name, is_client: x.isClient, comparison: figuresForPrompt(x.previous), current: figuresForPrompt(x.current) })),
+          )}\n${isBenchmark ? "The benchmark listed only its top competitors, so a null comparison means the brand was not in that list, not that it had 0%. Never describe such a brand as rising from a specific earlier figure." : "A comparison share of 0 means the brand was not mentioned at all in the comparison."}\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s rank and share relative to whichever competitor moved the most.`
+        : `${STYLE}\n\nSection: Competitors\nBrand: ${brand}\nPeriod: ${d.period.label}${none("competitor comparison")}\nEach brand's rank (by mentions), average list position (lower is better), visibility % and Share of Voice % in ${d.period.label}: ${JSON.stringify(
+            d.competitors.map((x) => ({ rank: x.rank, brand: x.name, is_client: x.isClient, ...figuresForPrompt(x.current) })),
+          )}\n\nWrite the Key Takeaway sentence now, referencing ${brand}'s rank and share relative to the leading brands.`,
     ],
   ];
   if (d.citations) {
