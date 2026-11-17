@@ -229,6 +229,21 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
   // Against an imported benchmark, every platform is compared with its one all-platform figure.
   const platformsCompared = d.platforms.some((p) => p.previous);
   const competitorsCompared = d.competitors.some((x) => x.previous);
+  // Answers citing the site in the comparison; an imported benchmark has no citation data, so it counts as 0.
+  const citingThen = d.citations?.previous?.ownSitePct ?? (c.assumedZero?.includes("Answers Citing Your Site") ? 0 : null);
+  // "A, B and C": house style, no Oxford comma.
+  const andList = (xs: string[]) => xs.reduce((acc, x, i) => (i === 0 ? x : `${acc}${i === xs.length - 1 ? " and " : ", "}${x}`), "");
+  // How the benchmark's scorecard figures were filled in, for the note under the tiles.
+  const benchmarkNote = isBenchmark
+    ? [
+        c.fromPromptTable?.includes("#1 Rankings") &&
+          `#1 Rankings ${then} counts its prompts where ${brand} ranked #1${c.fromPromptTable.includes("Top-3 Visibility") ? ", and Top-3 Visibility is its visibility from prompts ranked in the top 3" : ""}, from its prompt table.`,
+        c.assumedZero?.length &&
+          `It didn't report ${andList(c.assumedZero)}, so ${c.assumedZero.length === 1 ? "that counts" : "those count"} as 0 there.`,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "";
   const cards = scoreCards(cur, prev, isBenchmark).map((card) =>
     card.label === "Sentiment Score" && isBenchmark && c.sentimentScore != null
       ? { ...card, missing: `${c.sentimentScore}/100 ${then}, on a different scale` }
@@ -288,8 +303,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                 <StatCard
                   label="Answers Citing Your Site"
                   value={fmtPct(d.citations.current.ownSitePct)}
-                  prev={d.citations.previous ? fmtPct(d.citations.previous.ownSitePct) : null}
-                  diff={change(d.citations.current.ownSitePct, d.citations.previous?.ownSitePct, "pts")}
+                  prev={citingThen != null ? fmtPct(citingThen) : null}
+                  diff={change(d.citations.current.ownSitePct, citingThen, "pts")}
                   then={then}
                   missing={missing}
                 />
@@ -301,7 +316,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
               {d.runs.current.runs === 1 ? "" : "s"} in {P} ({d.runs.current.live} with live web search and{" "}
               {d.runs.current.training} from the AI&apos;s training data)
               {prev?.checks != null ? `, compared with ${fmtInt(prev.checks)} answers ${then}` : ""}.
-              {isBenchmark && prev && ` The comparison figures are from ${c.phrase}.`}{" "}
+              {isBenchmark && prev && ` The comparison figures are from ${c.phrase}.`}
+              {benchmarkNote && ` ${benchmarkNote}`}{" "}
               Visibility is the share of answers that mention {brand}. Top-3 Visibility is the share of all answers
               where {brand} is listed in the top 3. Sentiment Score is the share of mentions that are not negative.
             </p>
@@ -512,8 +528,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
             <StatCard
               label="Answers Citing Your Site"
               value={fmtPct(d.citations.current.ownSitePct)}
-              prev={d.citations.previous ? fmtPct(d.citations.previous.ownSitePct) : null}
-              diff={change(d.citations.current.ownSitePct, d.citations.previous?.ownSitePct, "pts")}
+              prev={citingThen != null ? fmtPct(citingThen) : null}
+              diff={change(d.citations.current.ownSitePct, citingThen, "pts")}
               then={then}
               missing={missing}
             />

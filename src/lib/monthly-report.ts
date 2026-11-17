@@ -108,6 +108,8 @@ export interface ReportComparison {
   source: string | null; // an imported benchmark's source, e.g. "ISA"
   sentimentScore: number | null; // an imported benchmark's own 0-100 sentiment: a different scale, never compared
   competitors: BenchmarkCompetitorRow[] | null; // an imported benchmark's competitor table
+  assumedZero?: string[]; // scorecard figures an imported benchmark didn't report, counted as 0 (zeroFillBenchmark)
+  fromPromptTable?: string[]; // scorecard figures worked out from its prompt table (benchmarkPromptFigures)
 }
 
 export interface RunCounts {
@@ -167,7 +169,7 @@ export function normalizeReportData(raw: unknown): MonthlyReportData {
         }
       : x,
   );
-  return { ...d, competitors };
+  return zeroFillBenchmark({ ...d, competitors });
 }
 
 function fromMonthReport(raw: LegacyReport): MonthlyReportData {
@@ -553,12 +555,13 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
     if (!snap) return null;
     const day = isoDay(snap.snapshotDate);
     const date = daysLabel([day]);
+    const fromPrompts = benchmarkPromptFigures(snap.ownVisibilityPct, snap.prompts);
     const score: CompareScore = {
       checks: null,
       visibilityPct: snap.ownVisibilityPct,
       avgRankWhenFound: snap.ownPosition,
-      rank1Count: null,
-      top3Pct: null,
+      rank1Count: fromPrompts.rank1Count,
+      top3Pct: fromPrompts.top3Pct,
       sentimentPct: null, // the benchmark's sentiment is a 0-100 score, not "% of mentions not negative"
     };
     const prompts = new Map<string, PromptThen>();
@@ -575,6 +578,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
         trafficPeriod: periodEndingOn(day, length),
         source: snap.source,
         sentimentScore: snap.ownSentiment,
+        fromPromptTable: fromPrompts.labels,
         competitors: [...snap.competitors]
           .sort((a, b) => (b.shareOfVoicePct ?? -1) - (a.shareOfVoicePct ?? -1))
           .map((c) => ({ name: c.name, sharePct: c.shareOfVoicePct, visibilityPct: c.visibilityPct, position: c.position })),
@@ -636,6 +640,7 @@ export async function buildMonthlyReportData(
   const prevChecks = compare.runs.flatMap((r) => r.rawResponses);
   const fromRuns = compare.info.kind !== "benchmark";
 
+  // (Imported benchmark gaps in the scorecard become 0 below: zeroFillBenchmark.)
   // An imported benchmark names competitors its own way (often by website): match them to tracked brands.
   // The client's own row compares with the benchmark's own figures (it has no share of voice for the client).
   let benchmark: BenchmarkForRows | null = null;
@@ -665,7 +670,7 @@ export async function buildMonthlyReportData(
     benchmark = { ...benchmark, list: compare.info.competitors, matches };
   }
 
-  return {
+  return zeroFillBenchmark({
     period,
     compare: compare.info,
     clientName: client.name,
@@ -697,7 +702,67 @@ export async function buildMonthlyReportData(
           results: crawl.results.map((r) => ({ label: CRAWL_VENDOR_LABEL[r.vendor] ?? r.vendor, success: r.success })),
         }
       : null,
-  };
+  });
+}
+
+/**
+ * #1 Rankings and Top-3 Visibility at an imported benchmark, from its prompt
+ * table (the user's call, 2026-11-17, over counting them as 0):
+ * - #1 Rankings: its prompts where the client ranked #1 (a prompt count; the
+ *   report's own figure counts answers, the closest the benchmark has);
+ * - Top-3 Visibility: its overall visibility, scaled by the share of that
+ *   visibility from prompts ranked in the top 3 (all of it when every found
+ *   prompt ranked top 3, e.g. Yellowbrick's ISA: one prompt, at #1).
+ * No prompt table: both stay null (and zeroFillBenchmark counts them as 0).
+ */
+function benchmarkPromptFigures(
+  ownVisibilityPct: number | null,
+  prompts: { position: number | null; visibilityPct: number | null }[],
+): { rank1Count: number | null; top3Pct: number | null; labels: string[] } {
+  if (!prompts.length) return { rank1Count: null, top3Pct: null, labels: [] };
+  const labels = ["#1 Rankings"];
+  const rank1Count = prompts.filter((p) => p.position != null && p.position <= 1).length;
+  let top3Pct: number | null = null;
+  if (ownVisibilityPct != null) {
+    const found = prompts.filter((p) => p.position != null || (p.visibilityPct ?? 0) > 0);
+    // Weight each found prompt by its visibility; equally if the table has none.
+    const byVisibility = found.some((p) => (p.visibilityPct ?? 0) > 0);
+    const weight = (p: (typeof found)[number]) => (byVisibility ? (p.visibilityPct ?? 0) : 1);
+    const total = found.reduce((a, p) => a + weight(p), 0);
+    const inTop3 = found.filter((p) => p.position != null && p.position <= 3).reduce((a, p) => a + weight(p), 0);
+    top3Pct = total > 0 ? (ownVisibilityPct * inTop3) / total : 0;
+    labels.push("Top-3 Visibility");
+  }
+  return { rank1Count, top3Pct, labels };
+}
+
+/**
+ * Scorecard figures an imported benchmark didn't report count as 0 there, so
+ * every tile has a number to compare with (the user's call, 2026-11-17).
+ * Sentiment is left alone: the benchmark has it, on a different scale. Avg
+ * rank is left alone too: 0 isn't a rank. Also applied to saved reports when
+ * they're opened (normalizeReportData), so older ones show the zeros too.
+ */
+function zeroFillBenchmark(d: MonthlyReportData): MonthlyReportData {
+  if (d.compare.kind !== "benchmark" || d.compare.assumedZero) return d;
+  const filled: CompareScore = d.scorecard.previous
+    ? { ...d.scorecard.previous }
+    : { checks: null, visibilityPct: null, avgRankWhenFound: null, rank1Count: null, top3Pct: null, sentimentPct: null };
+  const assumedZero: string[] = [];
+  if (filled.visibilityPct == null) {
+    filled.visibilityPct = 0;
+    assumedZero.push("Visibility");
+  }
+  if (filled.rank1Count == null) {
+    filled.rank1Count = 0;
+    assumedZero.push("#1 Rankings");
+  }
+  if (filled.top3Pct == null) {
+    filled.top3Pct = 0;
+    assumedZero.push("Top-3 Visibility");
+  }
+  if (d.citations && !d.citations.previous) assumedZero.push("Answers Citing Your Site");
+  return { ...d, scorecard: { ...d.scorecard, previous: filled }, compare: { ...d.compare, assumedZero } };
 }
 
 // ── Key Takeaways ──────────────────────────────────────────────────────────
@@ -751,7 +816,7 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
   const isBenchmark = c.kind === "benchmark";
   const period = `${c.phrase} versus ${d.period.label}`;
   const what = isBenchmark
-    ? `\nThe comparison is ${c.phrase}, an earlier audit of ${brand}'s AI visibility. A null comparison value means that figure was not part of the benchmark.`
+    ? `\nThe comparison is ${c.phrase}, an earlier audit of ${brand}'s AI visibility.${c.fromPromptTable?.includes("#1 Rankings") ? " The benchmark's rank1_count is the number of its prompts where the brand ranked #1." : ""}${c.assumedZero?.length ? ` The benchmark did not report ${c.assumedZero.join(", ")}, so those count as 0 at the benchmark.` : ""} A null comparison value means that figure was not part of the benchmark.`
     : c.kind === "firstCrawl"
       ? `\nThe comparison is ${c.phrase}, the first tracking of ${brand}'s AI visibility.`
       : "";
