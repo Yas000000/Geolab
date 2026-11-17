@@ -483,42 +483,9 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
               : ""}
           </p>
           <Takeaway text={t.competitors} />
-          {isBenchmark && c.competitors && c.competitors.length > 0 && (
-            <div className="mt-8">
-              <h3 className="mb-1 text-[13px] font-bold text-[#1E1E1E]">
-                At the {c.source} Benchmark ({c.date})
-              </h3>
-              <p className="mb-2 text-[11px] text-zinc-500">The competitors the benchmark measured, as it listed them.</p>
-              <Table>
-                <thead className="bg-[#FAF5F5]">
-                  <tr>
-                    <th className={th}>Competitor</th>
-                    <th className={th}>Tracked As</th>
-                    <th className={thR}>Position</th>
-                    <th className={thR}>Visibility</th>
-                    <th className={thR}>Share of Voice</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {c.competitors.map((row) => (
-                    <tr key={row.name} className="border-t border-[#F0E6E6]">
-                      <td className={td}>{row.name}</td>
-                      <td className={td}>
-                        {row.shownAs == null
-                          ? "n/a"
-                          : d.competitors.some((x) => x.name === row.shownAs)
-                            ? row.shownAs
-                            : `${row.shownAs} (not mentioned in ${P})`}
-                      </td>
-                      <td className={tdR}>{fmtRank(row.position)}</td>
-                      <td className={tdR}>{fmtPct(row.visibilityPct)}</td>
-                      <td className={tdR}>{fmtPct(row.sharePct)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
+          {/* The benchmark's own competitor list (and how its websites matched tracked brands) is
+              still saved with the report (compare.competitors) and drives the changes above; the
+              user asked for the table itself to be left out of the report (2026-11-17). */}
         </section>
       )}
 
