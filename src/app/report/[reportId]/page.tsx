@@ -7,6 +7,7 @@ import {
   trafficCaveat,
   type CompareScore,
   type CompetitorFigures,
+  type EngineRank,
   type ReportTakeaways,
   type ScoreMetrics,
   type TrafficTotals,
@@ -57,6 +58,28 @@ const fmtPct = (n: number | null | undefined) => (n == null ? "n/a" : `${n.toFix
 const fmtRank = (n: number | null | undefined) => (n == null ? "n/a" : n.toFixed(1));
 const fmtInt = (n: number | null | undefined) => (n == null ? "n/a" : Math.round(n).toLocaleString("en-US"));
 const fmtBest = (n: number | null | undefined) => (n == null ? "Not found" : `#${n}`);
+// One engine's rank in Prompt Movement, the Monthly GEO Report tool's way: "2", "—" (not
+// mentioned), "n/a" (no answer on that engine to read).
+const fmtEngine = (n: number | null | undefined) =>
+  n === undefined ? "n/a" : n === null ? "—" : Number.isInteger(n) ? String(n) : n.toFixed(1);
+
+/** "7 → 1": an engine's best rank then and now (now in bold; green in Rank Gains where that engine improved). */
+function EngineMove({ cell, showThen, gain }: { cell: EngineRank | undefined; showThen: boolean; gain: boolean }) {
+  const now = cell?.now;
+  const then = cell?.then;
+  const improved = gain && now != null && then !== undefined && (then === null || now < then);
+  return (
+    <span className="whitespace-nowrap">
+      {showThen && (
+        <>
+          <span className={cell?.then == null ? "text-zinc-400" : ""}>{fmtEngine(cell?.then)}</span>
+          <span className="mx-1 text-zinc-400">→</span>
+        </>
+      )}
+      <span className={now == null ? "text-zinc-400" : `font-semibold ${improved ? "text-green-700" : ""}`}>{fmtEngine(now)}</span>
+    </span>
+  );
+}
 
 // Changes are written the way the Monthly GEO Report tool writes them: points
 // and relative change together ("+9.6 pts / +9600.0%"), counts the same way
@@ -262,6 +285,12 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
         .join(" ")
     : "";
   const cards = scoreCards(cur, prev, isBenchmark).map((card) => ({ ...card, missing }));
+  // Prompt Movement's engine columns (reports saved before 2026-11-18 have none and keep
+  // their best-rank columns). engineThen: each engine's own "then"; combinedThen: the
+  // comparison only has one figure per prompt (Yellowbrick's ISA), shown in its own column.
+  const engineCols = d.prompts.engines ?? [];
+  const engineThen = d.prompts.compared && !!d.prompts.thenByEngine;
+  const combinedThen = d.prompts.compared && !d.prompts.thenByEngine && engineCols.length > 0;
   let n = 0;
 
   return (
@@ -395,6 +424,17 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {cur.checks > 0 && (
         <section className="rpt-page">
           <SectionHeader n={++n} title="Prompt Movement" sub={`Where ${brand} gained ground across the ${d.prompts.tracked} tracked prompts, and where a competitor still leads.`} />
+          {engineCols.length > 0 && (
+            <p className="-mt-2 mb-4 text-[11px] text-zinc-500">
+              {engineThen
+                ? `Each AI platform's best rank ${then}, then in ${P}.`
+                : combinedThen
+                  ? `The ${c.source} benchmark has one figure per prompt for all platforms combined, shown first; each AI platform's column is its best rank in ${P}.`
+                  : `Each AI platform's best rank in ${P}.`}{" "}
+              A dash means {brand} wasn&apos;t mentioned, and n/a means there was no answer on that platform to read. Which list a prompt is in goes
+              by its best rank on any platform.
+            </p>
+          )}
           {[
             { title: "New Wins", note: `Not mentioned ${then}, mentioned now.`, rows: d.prompts.newWins, watch: false },
             {
@@ -414,6 +454,36 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                 <p className="text-[12px] text-zinc-500">No prompt results {then} to compare with.</p>
               ) : b.rows.length === 0 ? (
                 <p className="text-[12px] text-zinc-500">None in {P}.</p>
+              ) : engineCols.length ? (
+                // Per engine, like the Monthly GEO Report tool's Win/Loss tables.
+                <Table>
+                  <thead className="bg-[#FAF5F5]">
+                    <tr>
+                      <th className={th}>Prompt</th>
+                      {combinedThen && <th className={`${thR} whitespace-nowrap`}>{c.label} (All Platforms)</th>}
+                      {engineCols.map((e) => (
+                        <th key={e.platform} className={`${th} text-center`}>
+                          {e.label}
+                        </th>
+                      ))}
+                      {b.watch && <th className={th}>Most Often #1</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.slice(0, 12).map((m) => (
+                      <tr key={m.text} className="border-t border-[#F0E6E6]">
+                        <td className={td}>{m.text}</td>
+                        {combinedThen && <td className={tdR}>{m.previouslyTracked ? fmtEngine(m.previousBestRank) : "n/a"}</td>}
+                        {engineCols.map((e) => (
+                          <td key={e.platform} className={`${td} text-center tabular-nums`}>
+                            <EngineMove cell={m.engines?.[e.platform]} showThen={engineThen} gain={b.title === "Rank Gains"} />
+                          </td>
+                        ))}
+                        {b.watch && <td className={td}>{m.outrankedBy ?? "n/a"}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
               ) : (
                 <Table>
                   <thead className="bg-[#FAF5F5]">

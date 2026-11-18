@@ -51,6 +51,16 @@ export interface PromptMove {
   previousBestRank: number | null;
   currentBestRank: number | null;
   outrankedBy?: string | null; // the brand most often at #1 when the client wasn't
+  // Each engine's own best rank then and now, laid out like the Monthly GEO Report
+  // tool's Win/Loss tables (the user's call, 2026-11-18): null = not found; a key left
+  // out = no data (not in the comparison, or no answer on that engine). Older saved
+  // reports have none and keep their best-rank layout.
+  engines?: Record<string, EngineRank>;
+}
+
+export interface EngineRank {
+  then?: number | null;
+  now?: number | null;
 }
 
 /** One brand's figures, as the GEO Rankings tab's Competitors table computes them. */
@@ -140,6 +150,10 @@ export interface MonthlyReportData {
     newWins: PromptMove[];
     rankGains: PromptMove[]; // includes every new win: unranked then, ranked now
     watchlist: PromptMove[];
+    // The engine columns (in this order) for PromptMove.engines; thenByEngine is false when
+    // the comparison has only one combined figure per prompt (Yellowbrick's ISA).
+    engines?: { platform: string; label: string }[];
+    thenByEngine?: boolean;
   };
   competitors: CompetitorRow[];
   citations: CitationSection | null;
@@ -296,6 +310,9 @@ function platformRows(current: Check[], previous: Check[]): PlatformRow[] {
 interface PromptThen {
   found: boolean;
   bestRank: number | null;
+  // Each engine's best rank then (null = not found on it); none when the comparison only
+  // has one combined figure per prompt.
+  byEngine?: Map<string, number | null>;
 }
 
 function groupByPrompt(checks: Check[]) {
@@ -320,7 +337,18 @@ const found = (checks: Check[]) => checks.some((c) => c.parsedResult?.clientBran
 
 function promptsThen(checks: Check[]): Map<string, PromptThen> {
   const out = new Map<string, PromptThen>();
-  for (const [key, a] of groupByPrompt(checks)) out.set(key, { found: found(a.checks), bestRank: bestRank(a.checks) });
+  for (const [key, a] of groupByPrompt(checks)) {
+    out.set(key, { found: found(a.checks), bestRank: bestRank(a.checks), byEngine: ranksByEngine(a.checks) });
+  }
+  return out;
+}
+
+/** A prompt's best rank on each engine it was asked on (null = asked, not found). */
+function ranksByEngine(checks: Check[]): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  for (const platform of new Set(checks.map((c) => c.platform))) {
+    out.set(platform, bestRank(checks.filter((c) => c.platform === platform)));
+  }
   return out;
 }
 
@@ -338,6 +366,13 @@ function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
   };
 
   const cur = groupByPrompt(current);
+  // Engine columns: every engine in the period or the comparison, in a fixed order.
+  // Which bucket a prompt lands in still goes by its best rank on any engine (the
+  // Monthly GEO Report tool does the same); the columns show each engine's own move.
+  const thenByEngine = [...(then?.values() ?? [])].some((p) => p.byEngine);
+  const platforms = new Set<string>(current.map((c) => c.platform));
+  for (const p of then?.values() ?? []) for (const platform of p.byEngine?.keys() ?? []) platforms.add(platform);
+  const engines = [...platforms].sort().map((platform) => ({ platform, label: PLATFORM_LABEL[platform] ?? platform }));
   const newWins: PromptMove[] = [];
   const rankGains: PromptMove[] = [];
   const watchlist: PromptMove[] = [];
@@ -345,7 +380,15 @@ function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
     const p = then?.get(key);
     const currentBestRank = bestRank(a.checks);
     const previousBestRank = p?.bestRank ?? null;
-    const move = { text: a.text, previouslyTracked: !!p, previousBestRank, currentBestRank };
+    const nowByEngine = ranksByEngine(a.checks);
+    const byEngine: Record<string, EngineRank> = {};
+    for (const { platform } of engines) {
+      const cell: EngineRank = {};
+      if (p?.byEngine?.has(platform)) cell.then = p.byEngine.get(platform)!;
+      if (nowByEngine.has(platform)) cell.now = nowByEngine.get(platform)!;
+      byEngine[platform] = cell;
+    }
+    const move = { text: a.text, previouslyTracked: !!p, previousBestRank, currentBestRank, engines: byEngine };
     // A prompt that isn't in the comparison is new to tracking, not a win.
     // Unranked then and ranked now is a rank gain too (the user's rule,
     // 2026-11-17), so every new win is also listed under Rank Gains.
@@ -364,6 +407,8 @@ function promptMoves(current: Check[], then: Map<string, PromptThen> | null) {
     newWins: newWins.sort(byBestRank),
     rankGains: rankGains.sort(byBestRank),
     watchlist: watchlist.sort(byBestRank),
+    engines,
+    thenByEngine,
   };
 }
 
@@ -596,13 +641,16 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
     };
     // A prompt's rows (one per platform when the benchmark has them): found on
     // any, at its best rank on any, the same way a crawl's prompt is read.
+    // Rows per platform also give each engine its own rank then.
     const prompts = new Map<string, PromptThen>();
     for (const p of snap.prompts) {
       const key = promptKey(p.promptText);
       const was = prompts.get(key);
       const found = p.position != null || (p.visibilityPct ?? 0) > 0;
       const ranks = [was?.bestRank, p.position].filter((r): r is number => r != null);
-      prompts.set(key, { found: !!was?.found || found, bestRank: ranks.length ? Math.min(...ranks) : null });
+      const byEngine = was?.byEngine ?? (p.platform ? new Map<string, number | null>() : undefined);
+      if (byEngine && p.platform) byEngine.set(p.platform, p.position);
+      prompts.set(key, { found: !!was?.found || found, bestRank: ranks.length ? Math.min(...ranks) : null, byEngine });
     }
     // Each platform's own figures, from its rows: visibility = answers naming the
     // client / its answers, avg rank = over the answers that named it.
