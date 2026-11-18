@@ -230,10 +230,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
   // them (uncovered: platforms it didn't include), else with its one all-platform figure.
   const platformsCompared = d.platforms.some((p) => p.previous);
   const uncovered = c.byPlatform ? d.platforms.filter((p) => !p.previous).map((p) => p.label) : [];
-  // Platforms whose benchmark figures were measured on another day: "Claude's are from Oct 19, 2026".
-  const measuredLater = d.platforms
-    .filter((p) => p.previous && c.platformDates?.[p.platform])
-    .map((p) => `${p.label}'s are from ${c.platformDates![p.platform]}`);
+  // Benchmark rows measured on another day: "those for 9 prompts are from Jun 1, 2026", "Claude's are from Oct 19, 2026".
+  const measuredLater = c.dateNotes ?? [];
   const competitorsCompared = d.competitors.some((x) => x.previous);
   // Answers citing the site in the comparison: an imported benchmark's own figure when it has
   // one (MacuMira's, from its keyword.com export), else it counts as 0 there.

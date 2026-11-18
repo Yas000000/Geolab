@@ -12,6 +12,7 @@ import {
   type RankSeries,
 } from "@/components/competitor-rank-chart";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
+import { benchmarkDateGroups } from "@/lib/benchmark-dates";
 import { isLiveSearchModel } from "@/lib/citations";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 import { requireTab } from "@/lib/viewer";
@@ -139,13 +140,14 @@ type BenchmarkRow = BenchmarkData["prompts"][number];
 const rowDate = (s: BenchmarkData, row: BenchmarkRow) => row.measuredOn ?? s.snapshotDate;
 // How a benchmark point reads in a Change hover: "Jun 1 (ISA benchmark)".
 const benchmarkDay = (s: BenchmarkData, date: Date = s.snapshotDate) => `${utcDay(date)} (${s.source} benchmark)`;
-// Platforms whose rows were measured on another day than the benchmark's: ["Claude Oct 19"].
-function otherDays(s: BenchmarkData, withYear = false): string[] {
-  const days = new Map<string, Date>();
-  for (const row of s.prompts) {
-    if (row.platform && row.measuredOn && row.measuredOn.getTime() !== s.snapshotDate.getTime()) days.set(row.platform, row.measuredOn);
-  }
-  return [...days].map(([p, d]) => `${PLATFORM_LABEL[p] ?? p} ${utcDay(d, withYear)}`);
+// Rows measured on another day than `from` (the benchmark's date, or a prompt's
+// earliest row): ["9 prompts Jun 1", "Claude Oct 19"] (src/lib/benchmark-dates.ts).
+function otherDays(from: Date, rows: BenchmarkRow[], withYear = false): string[] {
+  return benchmarkDateGroups(from, rows).map((g) =>
+    g.platform
+      ? `${PLATFORM_LABEL[g.platform] ?? g.platform} ${utcDay(g.date, withYear)}`
+      : `${g.prompts} ${g.prompts === 1 ? "prompt" : "prompts"} ${utcDay(g.date, withYear)}`,
+  );
 }
 
 // A benchmark with a prompt row per platform (MacuMira's) can start each
@@ -274,25 +276,37 @@ function buildPromptRankings(
       const rows = perPlatformRows(snap);
       if (!rows.length || snap.snapshotDate.getTime() >= firstCrawl) continue;
       const runId = `benchmark:${snap.id}`;
-      // The prompt's Visibility Change starts at all its benchmark rows together.
-      const others = otherDays(snap);
-      const visibilityLabel = `${utcDay(snap.snapshotDate)} (${snap.source} benchmark${others.length ? `; ${andList(others)}` : ""})`;
+      const byPrompt = new Map<string, BenchmarkRow[]>();
       for (const row of rows) {
-        const a = acc.get(row.promptText.trim().toLowerCase());
-        const date = rowDate(snap, row);
-        if (!a || date.getTime() >= firstCrawl) continue;
-        const point: CrawlPoint = {
-          runId,
-          date,
-          label: benchmarkDay(snap, date),
-          rank: row.position,
-          brandsNamed: row.brandsNamed ?? 0,
+        const key = row.promptText.trim().toLowerCase();
+        if (acc.has(key) && rowDate(snap, row).getTime() < firstCrawl) byPrompt.set(key, [...(byPrompt.get(key) ?? []), row]);
+      }
+      for (const [key, promptRows] of byPrompt) {
+        const a = acc.get(key)!;
+        // The prompt's Visibility Change starts at all its benchmark rows together, dated by
+        // its earliest row ("May 12 (ISA benchmark; Claude Oct 19)").
+        const earliest = new Date(Math.min(...promptRows.map((r) => rowDate(snap, r).getTime())));
+        const others = otherDays(earliest, promptRows);
+        const v = {
+          date: earliest,
+          label: `${utcDay(earliest)} (${snap.source} benchmark${others.length ? `; ${andList(others)}` : ""})`,
+          checks: 0,
+          mentioned: 0,
         };
-        const p = ensurePlatform(a, row.platform!);
-        if (!p.first || point.date < p.first.date) p.first = point;
-        const v = a.byRun.get(runId) ?? { date: snap.snapshotDate, label: visibilityLabel, checks: 0, mentioned: 0 };
-        v.checks += 1;
-        if (row.position != null) v.mentioned += 1;
+        for (const row of promptRows) {
+          const date = rowDate(snap, row);
+          const point: CrawlPoint = {
+            runId,
+            date,
+            label: benchmarkDay(snap, date),
+            rank: row.position,
+            brandsNamed: row.brandsNamed ?? 0,
+          };
+          const p = ensurePlatform(a, row.platform!);
+          if (!p.first || point.date < p.first.date) p.first = point;
+          v.checks += 1;
+          if (row.position != null) v.mentioned += 1;
+        }
         a.byRun.set(runId, v);
       }
     }
@@ -440,7 +454,7 @@ function buildDashboardData(
       const mine = rows.filter((p) => p.platform === platformFilter);
       if (!mine.length) continue;
       value = (mine.filter((p) => p.position != null).length / mine.length) * 100;
-      date = rowDate(snap, mine[0]);
+      date = new Date(Math.min(...mine.map((r) => rowDate(snap, r).getTime()))); // its earliest row
     }
     datedPoints.push({
       date: date.getTime(),
@@ -563,10 +577,14 @@ function buildDashboardData(
       : undefined;
   const changeStart = startBenchmark
     ? {
-        label: `${startBenchmark.source} benchmark (${utcDay(startBenchmark.snapshotDate, true)}${otherDays(startBenchmark, true).length ? `; ${andList(otherDays(startBenchmark, true))}` : ""})`,
+        label: `${startBenchmark.source} benchmark (${utcDay(startBenchmark.snapshotDate, true)}${(() => {
+          const others = otherDays(startBenchmark.snapshotDate, perPlatformRows(startBenchmark), true);
+          return others.length ? `; ${andList(others)}` : "";
+        })()})`,
         latest: crawlDay(answeredRuns[answeredRuns.length - 1].startedAt),
-        platforms: [...new Set(perPlatformRows(startBenchmark).map((p) => p.platform!))]
-          .filter((p) => platformsAvailable.includes(p))
+        // In the table's column order.
+        platforms: platformsAvailable
+          .filter((p) => perPlatformRows(startBenchmark).some((r) => r.platform === p))
           .map((p) => PLATFORM_LABEL[p] ?? p),
         uncovered: platformsAvailable
           .filter((p) => !perPlatformRows(startBenchmark).some((r) => r.platform === p))

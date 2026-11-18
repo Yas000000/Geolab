@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
+import { benchmarkDateGroups } from "@/lib/benchmark-dates";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 import { citationTrackedRuns, isLiveSearchModel, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { CRAWL_VENDOR_LABEL, latestCrawlCheck } from "@/lib/crawl-check";
@@ -112,7 +113,9 @@ export interface ReportComparison {
   fromPromptTable?: string[]; // scorecard figures worked out from its prompt table, not stated by it (benchmarkPromptFigures)
   ownSiteCitedPct?: number | null; // an imported benchmark's % of answers citing the client's site, when it has it
   byPlatform?: boolean; // an imported benchmark with figures per platform (so each platform is compared with its own)
-  platformDates?: Record<string, string>; // platform -> "Oct 19, 2026", for platforms measured on another day than the benchmark's
+  // An imported benchmark's rows measured on other days than its own date:
+  // ["those for 9 prompts are from Jun 1, 2026", "Claude's are from Oct 19, 2026"].
+  dateNotes?: string[];
 }
 
 export interface RunCounts {
@@ -604,8 +607,6 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
     // Each platform's own figures, from its rows: visibility = answers naming the
     // client / its answers, avg rank = over the answers that named it.
     const platformScores = new Map<string, NonNullable<PlatformRow["previous"]>>();
-    // Platforms measured on another day than the benchmark's (MacuMira's Claude: Oct 19), for the notes.
-    const platformDates: Record<string, string> = {};
     for (const platform of new Set(snap.prompts.map((p) => p.platform).filter((x) => x != null))) {
       const rows = snap.prompts.filter((p) => p.platform === platform);
       const ranks = rows.map((p) => p.position).filter((r): r is number => r != null);
@@ -614,9 +615,14 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
         visibilityPct: (ranks.length / rows.length) * 100,
         avgRank: ranks.length ? ranks.reduce((a, r) => a + r, 0) / ranks.length : null,
       });
-      const measured = rows.find((p) => p.measuredOn)?.measuredOn;
-      if (measured && isoDay(measured) !== day) platformDates[platform] = daysLabel([isoDay(measured)]);
     }
+    // Rows measured on another day than the benchmark's, for the notes: MacuMira's
+    // "those for 9 prompts are from Jun 1, 2026", "Claude's are from Oct 19, 2026".
+    const dateNotes = benchmarkDateGroups(snap.snapshotDate, snap.prompts.filter((p) => p.platform != null)).map((g) =>
+      g.platform
+        ? `${PLATFORM_LABEL[g.platform] ?? g.platform}'s are from ${daysLabel([isoDay(g.date)])}`
+        : `those for ${g.prompts} ${g.prompts === 1 ? "prompt are" : "prompts are"} from ${daysLabel([isoDay(g.date)])}`,
+    );
     return {
       info: {
         kind: "benchmark",
@@ -630,7 +636,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
         fromPromptTable: fromPrompts.labels,
         ownSiteCitedPct: snap.ownSiteCitedPct,
         byPlatform: platformScores.size > 0,
-        ...(Object.keys(platformDates).length ? { platformDates } : {}),
+        ...(dateNotes.length ? { dateNotes } : {}),
         competitors: [...snap.competitors]
           .sort((a, b) => (b.shareOfVoicePct ?? -1) - (a.shareOfVoicePct ?? -1))
           .map((c) => ({ name: c.name, sharePct: c.shareOfVoicePct, visibilityPct: c.visibilityPct, position: c.position })),
@@ -930,7 +936,7 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     [
       "platforms",
       platformsCompared
-        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}${isBenchmark ? (c.byPlatform ? `\nThe benchmark has its own figures for each platform it covered; a platform with null comparison values was not part of the benchmark, so never describe it as changing.${Object.entries(c.platformDates ?? {}).map(([p, day]) => ` ${PLATFORM_LABEL[p] ?? p}'s benchmark figures were measured on ${day}, not on the benchmark's own date.`).join("")}` : "\nThe benchmark has one figure for all platforms combined, so it is the comparison for every platform.") : ""}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
+        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}${isBenchmark ? (c.byPlatform ? `\nThe benchmark has its own figures for each platform it covered; a platform with null comparison values was not part of the benchmark, so never describe it as changing.${c.dateNotes?.length ? ` The benchmark's figures are from ${c.date}, except: ${c.dateNotes.join("; ")}.` : ""}` : "\nThe benchmark has one figure for all platforms combined, so it is the comparison for every platform.") : ""}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
             d.platforms.map((p) => ({
               platform: p.label,
               ...(isBenchmark ? {} : { comparison_answers: p.previous?.checks ?? 0 }),
