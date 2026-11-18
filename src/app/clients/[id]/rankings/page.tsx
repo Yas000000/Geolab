@@ -81,10 +81,13 @@ const RANK_CHART_BRANDS = 5;
 
 // Prompt Rankings' first column: pinned while the platform columns scroll
 // sideways, wide enough that a prompt isn't one word per line on a phone.
+// From md up it's at least 16rem and takes whatever the (tight, no-wrap)
+// number columns leave: this tab gets a wider page (page-frame.tsx) so
+// every column shows on load from a 1280px screen up.
 // The divider is an inset shadow because a collapsed-table border doesn't
 // travel with a sticky cell. Each cell still sets its own background.
 const PROMPT_COL =
-  "sticky left-0 z-[1] min-w-[11rem] shadow-[inset_-1px_0_0_var(--color-zinc-200)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-800)]";
+  "sticky left-0 z-[1] min-w-[11rem] md:min-w-[16rem] shadow-[inset_-1px_0_0_var(--color-zinc-200)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-800)]";
 
 // Failed calls (blank answers) are excluded in getClient's query, so every
 // response here is a real answer and only those count as a crawl.
@@ -629,33 +632,33 @@ export default async function ClientRankingsPage({
                           Prompt
                         </th>
                         {platformsAvailable.map((platform) => (
-                          <th key={platform} colSpan={2} className="border-l border-zinc-200 px-4 py-1 text-center font-medium dark:border-zinc-800">
+                          <th key={platform} colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
                             {PLATFORM_LABEL[platform] ?? platform}
                           </th>
                         ))}
-                        <th colSpan={2} className="border-l border-zinc-200 px-4 py-1 text-center font-medium dark:border-zinc-800">
+                        <th colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
                           Visibility
                         </th>
-                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                        <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
                           Top-3 Rate
                         </th>
-                        <th rowSpan={2} className="px-4 py-2 align-bottom font-medium tabular-nums">
+                        <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
                           Share of Voice
                         </th>
                       </tr>
                       <tr>
                         {platformsAvailable.map((platform) => (
                           <Fragment key={platform}>
-                            <th className="border-l border-zinc-200 px-3 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                            <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
                               Rank
                             </th>
-                            <th className="px-3 py-1.5 text-right font-medium tabular-nums">Change</th>
+                            <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
                           </Fragment>
                         ))}
-                        <th className="border-l border-zinc-200 px-3 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                        <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
                           %
                         </th>
-                        <th className="px-3 py-1.5 text-right font-medium tabular-nums">Change</th>
+                        <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -666,10 +669,10 @@ export default async function ClientRankingsPage({
                             const cell = p.platforms[platform];
                             return (
                               <Fragment key={platform}>
-                                <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
+                                <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
                                   {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
                                 </td>
-                                <td className="px-3 py-2 text-right tabular-nums" title={cell?.changeTitle ?? undefined}>
+                                <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={cell?.changeTitle ?? undefined}>
                                   {cell?.movement == null ? (
                                     <span className="text-zinc-300 dark:text-zinc-700">—</span>
                                   ) : (
@@ -690,10 +693,10 @@ export default async function ClientRankingsPage({
                               </Fragment>
                             );
                           })}
-                          <td className="border-l border-zinc-100 px-3 py-2 text-right tabular-nums dark:border-zinc-900">
+                          <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
                             {p.visibilityPct.toFixed(0)}%
                           </td>
-                          <td className="px-3 py-2 text-right tabular-nums" title={p.visibilityChangeTitle ?? undefined}>
+                          <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={p.visibilityChangeTitle ?? undefined}>
                             {p.visibilityChange == null ? (
                               <span className="text-zinc-300 dark:text-zinc-700">—</span>
                             ) : (
@@ -711,8 +714,8 @@ export default async function ClientRankingsPage({
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-2 tabular-nums">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
-                          <td className="px-4 py-2 tabular-nums">
+                          <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
+                          <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
                             {p.shareOfVoicePct != null ? `${p.shareOfVoicePct.toFixed(0)}%` : "—"}
                           </td>
                         </tr>

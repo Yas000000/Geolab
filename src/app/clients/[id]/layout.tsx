@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { ClientSwitcher } from "@/components/client-switcher";
 import { ClientNav } from "@/components/client-nav";
 import { ArchivedBanner } from "@/components/client-lifecycle";
+import { PageFrame } from "@/components/page-frame";
 import { getViewer } from "@/lib/viewer";
 import { homePath } from "@/lib/auth";
 
@@ -41,7 +42,7 @@ export default async function ClientLayout({
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
       <div className="border-b border-zinc-200 bg-white px-4 py-2.5 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mx-auto flex max-w-6xl items-center gap-4">
+        <PageFrame className="flex items-center gap-4">
           {isTeam ? (
             <>
               <ClientSwitcher clients={switcherClients} currentId={id} />
@@ -55,11 +56,11 @@ export default async function ClientLayout({
           ) : (
             <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{current.name}</span>
           )}
-        </div>
+        </PageFrame>
       </div>
       {/* Below md the sidebar becomes a swipeable tab row above the content,
           so a phone gets the full width instead of ~120px beside a 176px menu. */}
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 md:flex-row md:gap-8 md:py-10">
+      <PageFrame className="flex flex-col gap-6 px-4 py-6 sm:px-6 md:flex-row md:gap-8 md:py-10">
         <ClientNav clientId={id} tabs={isTeam ? null : viewer.allowedTabs} />
         <div className="min-w-0 flex-1">
           {isTeam && current.archivedAt && (
@@ -67,7 +68,7 @@ export default async function ClientLayout({
           )}
           {children}
         </div>
-      </div>
+      </PageFrame>
     </div>
   );
 }
