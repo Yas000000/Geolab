@@ -226,8 +226,10 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
   const then = isBenchmark ? `at the ${c.source} benchmark` : c.kind === "firstCrawl" ? "at the first crawl" : `in ${c.label}`;
   const missing = isBenchmark ? "Not part of the benchmark" : `No data ${then}`;
   // Nothing to compare with: drop the "then" and change columns instead of filling them with n/a.
-  // Against an imported benchmark, every platform is compared with its one all-platform figure.
+  // Against an imported benchmark, each platform is compared with its own figures when it has
+  // them (uncovered: platforms it didn't include), else with its one all-platform figure.
   const platformsCompared = d.platforms.some((p) => p.previous);
+  const uncovered = c.byPlatform ? d.platforms.filter((p) => !p.previous).map((p) => p.label) : [];
   const competitorsCompared = d.competitors.some((x) => x.previous);
   // Answers citing the site in the comparison: an imported benchmark's own figure when it has
   // one (MacuMira's, from its keyword.com export), else it counts as 0 there.
@@ -346,7 +348,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
             <thead className="bg-[#FAF5F5]">
               <tr>
                 <th className={th}>Platform</th>
-                {platformsCompared && <th className={thR}>{isBenchmark ? `${c.label} (All Platforms)` : c.label}</th>}
+                {platformsCompared && <th className={thR}>{isBenchmark && !c.byPlatform ? `${c.label} (All Platforms)` : c.label}</th>}
                 <th className={thR}>{platformsCompared ? P : "Visibility"}</th>
                 {platformsCompared && <th className={thR}>Change</th>}
                 {platformsCompared && <th className={thR}>Avg Rank Then</th>}
@@ -378,8 +380,9 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
           </Table>
           {isBenchmark && platformsCompared && (
             <p className="mt-2 text-[11px] text-zinc-500">
-              The {c.source} benchmark was measured across all platforms combined, so each platform&apos;s change is
-              measured from that combined figure.
+              {c.byPlatform
+                ? `Each platform is compared with its own figures at the ${c.source} benchmark.${uncovered.length ? ` ${andList(uncovered)} ${uncovered.length === 1 ? "wasn't" : "weren't"} part of it, so ${uncovered.length === 1 ? "it has" : "they have"} no change.` : ""}`
+                : `The ${c.source} benchmark was measured across all platforms combined, so each platform's change is measured from that combined figure.`}
             </p>
           )}
           <Takeaway text={t.platforms} />

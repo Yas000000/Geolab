@@ -247,9 +247,18 @@ model BenchmarkPromptResult {
   snapshotId    String
   snapshot      BenchmarkSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   promptText    String
+  // The AI platform this row is for, when the source breaks its prompt table
+  // down by platform (MacuMira's keyword.com benchmark: one row per prompt per
+  // engine, so each platform is compared with its own figures). Null: one
+  // combined row per prompt (Yellowbrick's ISA).
+  platform      Platform?
   position      Float?
   sentiment     Int?
   visibilityPct Float?
+  // Other brands that answer named, for the Rankings tab's rule that an answer
+  // leaving the client out counts as one place below the last brand it names.
+  // Per-platform rows only.
+  brandsNamed   Int?
 
   @@index([snapshotId])
 }

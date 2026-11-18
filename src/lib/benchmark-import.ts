@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Platform } from "@/generated/prisma/client";
 
 export interface BenchmarkImportCompetitor {
   name: string;
@@ -10,9 +11,12 @@ export interface BenchmarkImportCompetitor {
 
 export interface BenchmarkImportPrompt {
   promptText: string;
+  // One row per prompt per platform when the source has them; omit for one combined row per prompt.
+  platform?: Platform | null;
   position?: number | null;
   sentiment?: number | null;
   visibilityPct?: number | null;
+  brandsNamed?: number | null; // other brands that answer named (per-platform rows)
 }
 
 export interface BenchmarkImportPayload {
@@ -54,9 +58,11 @@ export async function importBenchmarkSnapshot(clientId: string, data: BenchmarkI
       prompts: {
         create: (data.prompts ?? []).map((p) => ({
           promptText: p.promptText,
+          platform: p.platform ?? null,
           position: p.position ?? null,
           sentiment: p.sentiment ?? null,
           visibilityPct: p.visibilityPct ?? null,
+          brandsNamed: p.brandsNamed ?? null,
         })),
       },
     },

@@ -111,6 +111,7 @@ export interface ReportComparison {
   assumedZero?: string[]; // scorecard figures an imported benchmark didn't report, counted as 0 (zeroFillBenchmark)
   fromPromptTable?: string[]; // scorecard figures worked out from its prompt table, not stated by it (benchmarkPromptFigures)
   ownSiteCitedPct?: number | null; // an imported benchmark's % of answers citing the client's site, when it has it
+  byPlatform?: boolean; // an imported benchmark with figures per platform (so each platform is compared with its own)
 }
 
 export interface RunCounts {
@@ -559,6 +560,8 @@ interface ResolvedCompare {
   runs: RunRows; // the comparison's GEO runs (none for an imported benchmark)
   score: CompareScore | null; // set for an imported benchmark (from runs otherwise)
   prompts: Map<string, PromptThen> | null; // set for an imported benchmark (from runs otherwise)
+  // An imported benchmark's own figures per platform, when its prompt table has them.
+  platformScores?: Map<string, NonNullable<PlatformRow["previous"]>> | null;
 }
 
 async function resolveCompare(clientId: string, period: ReportPeriod, spec: CompareSpec): Promise<ResolvedCompare | null> {
@@ -587,9 +590,27 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
       top3Pct: fromPrompts.top3Pct,
       sentimentPct: snap.ownSentiment, // its 0-100 sentiment score, read as a % (see zeroFillBenchmark)
     };
+    // A prompt's rows (one per platform when the benchmark has them): found on
+    // any, at its best rank on any, the same way a crawl's prompt is read.
     const prompts = new Map<string, PromptThen>();
     for (const p of snap.prompts) {
-      prompts.set(promptKey(p.promptText), { found: p.position != null || (p.visibilityPct ?? 0) > 0, bestRank: p.position });
+      const key = promptKey(p.promptText);
+      const was = prompts.get(key);
+      const found = p.position != null || (p.visibilityPct ?? 0) > 0;
+      const ranks = [was?.bestRank, p.position].filter((r): r is number => r != null);
+      prompts.set(key, { found: !!was?.found || found, bestRank: ranks.length ? Math.min(...ranks) : null });
+    }
+    // Each platform's own figures, from its rows: visibility = answers naming the
+    // client / its answers, avg rank = over the answers that named it.
+    const platformScores = new Map<string, NonNullable<PlatformRow["previous"]>>();
+    for (const platform of new Set(snap.prompts.map((p) => p.platform).filter((x) => x != null))) {
+      const rows = snap.prompts.filter((p) => p.platform === platform);
+      const ranks = rows.map((p) => p.position).filter((r): r is number => r != null);
+      platformScores.set(platform, {
+        checks: rows.length,
+        visibilityPct: (ranks.length / rows.length) * 100,
+        avgRank: ranks.length ? ranks.reduce((a, r) => a + r, 0) / ranks.length : null,
+      });
     }
     return {
       info: {
@@ -603,6 +624,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
         sentimentScore: snap.ownSentiment,
         fromPromptTable: fromPrompts.labels,
         ownSiteCitedPct: snap.ownSiteCitedPct,
+        byPlatform: platformScores.size > 0,
         competitors: [...snap.competitors]
           .sort((a, b) => (b.shareOfVoicePct ?? -1) - (a.shareOfVoicePct ?? -1))
           .map((c) => ({ name: c.name, sharePct: c.shareOfVoicePct, visibilityPct: c.visibilityPct, position: c.position })),
@@ -610,6 +632,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
       runs: [],
       score: Object.values(score).some((v) => v != null) ? score : null,
       prompts: prompts.size ? prompts : null,
+      platformScores: platformScores.size ? platformScores : null,
     };
   }
 
@@ -709,9 +732,11 @@ export async function buildMonthlyReportData(
       ? platformRows(curChecks, prevChecks)
       : platformRows(curChecks, []).map((p) => ({
           ...p,
-          // An imported benchmark has one all-platform figure: every platform is compared with it.
-          previous:
-            compare.score?.visibilityPct != null
+          // An imported benchmark with figures per platform: each platform against its own
+          // (a platform it didn't cover has none). Otherwise its one all-platform figure for every platform.
+          previous: compare.platformScores
+            ? (compare.platformScores.get(p.platform) ?? null)
+            : compare.score?.visibilityPct != null
               ? { checks: null, visibilityPct: compare.score.visibilityPct, avgRank: compare.score.avgRankWhenFound }
               : null,
         })),
@@ -732,36 +757,46 @@ export async function buildMonthlyReportData(
 /**
  * #1 Rankings and Top-3 Visibility at an imported benchmark. A figure the
  * benchmark states itself is used as stated (MacuMira's Updated GEO
- * Benchmarks: 24 answers at #1, 33.3%). The prompt table keeps one rank per
- * prompt (its best on any engine), so working them out from it undercounts
- * #1 answers and can overcount the top 3 whenever a prompt ranked on more
- * than one engine (the user's call, 2026-11-18). Otherwise, from its prompt
- * table (the user's call, 2026-11-17, over counting them as 0):
+ * Benchmarks: 24 answers at #1, 33.3%). A prompt table with a row per
+ * platform (MacuMira's) is one row per answer, so both are counted exactly,
+ * the same way as the report's own: answers at #1, and answers in the top 3
+ * as a % of all its answers. Otherwise it has one combined row per prompt
+ * (Yellowbrick's ISA), and they're worked out from it (the user's call,
+ * 2026-11-17, over counting them as 0):
  * - #1 Rankings: its prompts where the client ranked #1 (a prompt count; the
  *   report's own figure counts answers, the closest the benchmark has);
  * - Top-3 Visibility: its overall visibility, scaled by the share of that
  *   visibility from prompts ranked in the top 3 (all of it when every found
  *   prompt ranked top 3, e.g. Yellowbrick's ISA: one prompt, at #1).
- * labels lists only the figures worked out from the prompt table.
+ * labels lists only the figures worked out from a combined prompt table.
  * Neither stated nor a prompt table: both stay null (zeroFillBenchmark counts them as 0).
  */
+type BenchmarkPromptRow = { platform: string | null; position: number | null; visibilityPct: number | null };
+
 function benchmarkPromptFigures(
   ownVisibilityPct: number | null,
-  prompts: { position: number | null; visibilityPct: number | null }[],
+  prompts: BenchmarkPromptRow[],
   stated: { rank1Count: number | null; top3Pct: number | null },
 ): { rank1Count: number | null; top3Pct: number | null; labels: string[] } {
-  const derived = deriveFromPromptTable(ownVisibilityPct, prompts);
+  const perAnswer = prompts.some((p) => p.platform != null);
+  const rows = perAnswer ? prompts.filter((p) => p.platform != null) : prompts;
+  const derived = perAnswer
+    ? {
+        rank1Count: rows.filter((p) => p.position != null && p.position <= 1).length,
+        top3Pct: (rows.filter((p) => p.position != null && p.position <= 3).length / rows.length) * 100,
+      }
+    : deriveFromPromptTable(ownVisibilityPct, rows);
   const labels: string[] = [];
   const rank1Count = stated.rank1Count ?? derived.rank1Count;
-  if (stated.rank1Count == null && derived.rank1Count != null) labels.push("#1 Rankings");
+  if (!perAnswer && stated.rank1Count == null && derived.rank1Count != null) labels.push("#1 Rankings");
   const top3Pct = stated.top3Pct ?? derived.top3Pct;
-  if (stated.top3Pct == null && derived.top3Pct != null) labels.push("Top-3 Visibility");
+  if (!perAnswer && stated.top3Pct == null && derived.top3Pct != null) labels.push("Top-3 Visibility");
   return { rank1Count, top3Pct, labels };
 }
 
 function deriveFromPromptTable(
   ownVisibilityPct: number | null,
-  prompts: { position: number | null; visibilityPct: number | null }[],
+  prompts: BenchmarkPromptRow[],
 ): { rank1Count: number | null; top3Pct: number | null } {
   if (!prompts.length) return { rank1Count: null, top3Pct: null };
   const rank1Count = prompts.filter((p) => p.position != null && p.position <= 1).length;
@@ -889,7 +924,7 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     [
       "platforms",
       platformsCompared
-        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}${isBenchmark ? "\nThe benchmark has one figure for all platforms combined, so it is the comparison for every platform." : ""}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
+        ? `${STYLE}\n\nSection: Visibility by AI Platform\nBrand: ${brand}\nPeriod: ${period}${what}${isBenchmark ? (c.byPlatform ? "\nThe benchmark has its own figures for each platform it covered; a platform with null comparison values was not part of the benchmark, so never describe it as changing." : "\nThe benchmark has one figure for all platforms combined, so it is the comparison for every platform.") : ""}\nPer platform, visibility % and average rank when found, in the comparison then in ${d.period.label}: ${JSON.stringify(
             d.platforms.map((p) => ({
               platform: p.label,
               ...(isBenchmark ? {} : { comparison_answers: p.previous?.checks ?? 0 }),
