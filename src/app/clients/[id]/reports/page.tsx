@@ -16,13 +16,18 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
     select: {
       name: true,
       domain: true,
+      locations: { orderBy: { position: "asc" }, select: { id: true, label: true } },
       monthlyReports: {
         orderBy: [{ periodEnd: "desc" }, { periodStart: "desc" }],
-        select: { id: true, periodStart: true, periodEnd: true, compareLabel: true, updatedAt: true },
+        select: { id: true, periodStart: true, periodEnd: true, compareLabel: true, location: true, updatedAt: true },
       },
     },
   });
   if (!client) notFound();
+  // A saved report's location: "" = all, a location id, or "none" (answers with no location).
+  const locationName = (key: string) =>
+    key === "" ? (client.locations.length ? "All locations" : "") : key === "none" ? "No location" : (client.locations.find((l) => l.id === key)?.label ?? "Removed location");
+  const showLocations = client.locations.length > 0 || client.monthlyReports.some((r) => r.location);
 
   // Default: the last full month against the client's first imported
   // benchmark, else its first crawl, else the month before.
@@ -46,7 +51,8 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
         compareOptions={options}
         defaultCompare={fallback.kind === "benchmark" ? `benchmark:${fallback.snapshotId}` : fallback.kind}
         firstCrawlDays={choices.firstCrawl?.days ?? null}
-        savedPeriods={client.monthlyReports.map((r) => ({ start: r.periodStart, end: r.periodEnd }))}
+        savedPeriods={client.monthlyReports.map((r) => ({ start: r.periodStart, end: r.periodEnd, location: r.location }))}
+        locations={client.locations.length ? [...client.locations.map((l) => ({ key: l.id, label: l.label })), { key: "none", label: "No location" }] : []}
       />
     );
   }
@@ -81,6 +87,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
               <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   <th className="px-4 py-2 font-medium">Period</th>
+                  {showLocations && <th className="px-4 py-2 font-medium">Location</th>}
                   <th className="px-4 py-2 font-medium">Compared with</th>
                   <th className="px-4 py-2 font-medium">Generated</th>
                   <th className="px-4 py-2 font-medium" />
@@ -90,6 +97,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
                 {client.monthlyReports.map((r) => (
                   <tr key={r.id} className="bg-white dark:bg-zinc-950">
                     <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">{periodLabel(r.periodStart, r.periodEnd)}</td>
+                    {showLocations && <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">{locationName(r.location) || "n/a"}</td>}
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">{r.compareLabel || "n/a"}</td>
                     <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
                       {r.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}

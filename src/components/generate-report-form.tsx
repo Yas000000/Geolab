@@ -26,6 +26,7 @@ export function GenerateReportForm({
   defaultCompare,
   firstCrawlDays,
   savedPeriods,
+  locations = [],
 }: {
   clientId: string;
   presets: { key: string; label: string; period: DayRange }[];
@@ -33,15 +34,18 @@ export function GenerateReportForm({
   compareOptions: CompareOption[];
   defaultCompare: string;
   firstCrawlDays: string[] | null;
-  savedPeriods: DayRange[];
+  savedPeriods: (DayRange & { location?: string })[];
+  // A client tracked in several places: report all of them (each in its own chapter) or one.
+  locations?: { key: string; label: string }[];
 }) {
   const [period, setPeriod] = useState<DayRange>({ start: defaultPeriod.start, end: defaultPeriod.end });
+  const [location, setLocation] = useState("");
   const [compare, setCompare] = useState(defaultCompare);
   const [custom, setCustom] = useState<DayRange | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const exists = savedPeriods.some((p) => p.start === period.start && p.end === period.end);
+  const exists = savedPeriods.some((p) => p.start === period.start && p.end === period.end && (p.location ?? "") === location);
   const previous = previousPeriod(period.start, period.end);
   const isBenchmark = compare.startsWith("benchmark:");
 
@@ -67,7 +71,7 @@ export function GenerateReportForm({
       const res = await fetch(`/api/clients/${clientId}/reports`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start: period.start, end: period.end, compare: spec }),
+        body: JSON.stringify({ start: period.start, end: period.end, compare: spec, location }),
       });
       const data = await res.json().catch(() => ({ error: "No response in time -- refresh in a minute." }));
       if (!res.ok) {
@@ -114,6 +118,27 @@ export function GenerateReportForm({
             </div>
           )}
         </div>
+        {locations.length > 0 && (
+          <div>
+            <label htmlFor="report-location" className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              Location
+            </label>
+            <select
+              id="report-location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={generating}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              <option value="">All locations</option>
+              {locations.map((l) => (
+                <option key={l.key} value={l.key}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <button
@@ -129,7 +154,8 @@ export function GenerateReportForm({
         <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">{overlapNote}</p>
       )}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        Uses this portal&apos;s runs, citations, Google Analytics, Search Console and AI crawler data. Takes about 20 seconds.
+        Uses this portal&apos;s runs, citations, Google Analytics, Search Console and AI crawler data. Takes about 20 seconds
+        {locations.length > 0 && !location ? " per location: All locations gives each location its own chapter, after a page comparing them side by side" : ""}.
         {isBenchmark &&
           " An imported benchmark has overall visibility and rank, prompt ranks and its own competitor list, so the per-platform and citation sections show the report period alone."}
         {(isBenchmark || compare === "firstCrawl") &&

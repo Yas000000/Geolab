@@ -5,7 +5,9 @@ import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // DB reads plus ~6 parallel Key Takeaway calls, ~10-20s in practice
+// DB reads plus ~6 parallel Key Takeaway calls, ~10-20s in practice; an All locations
+// report does that once per location (~1 minute for MacuMira's three).
+export const maxDuration = 300;
 
 /**
  * Generates (or regenerates) one client's report for
@@ -17,7 +19,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id
   const { id } = await ctx.params;
   const archived = await archivedReply(id);
   if (archived) return archived;
-  const body = (await request.json().catch(() => ({}))) as { start?: unknown; end?: unknown; compare?: unknown };
+  // location: "" (or left out) = the whole client (each location in its own chapter), a location id or "none".
+  const body = (await request.json().catch(() => ({}))) as { start?: unknown; end?: unknown; compare?: unknown; location?: unknown };
+  const location = typeof body.location === "string" ? body.location : "";
   const bad = periodError(body.start, body.end);
   if (bad) return Response.json({ error: bad }, { status: 400 });
   const compare = parseCompareSpec(body.compare);
@@ -27,8 +31,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id
     if (badCompare) return Response.json({ error: badCompare }, { status: 400 });
   }
   try {
-    const result = await generateMonthlyReport(id, makePeriod(body.start as string, body.end as string), compare);
+    const result = await generateMonthlyReport(id, makePeriod(body.start as string, body.end as string), compare, location);
     if (result.ok) return Response.json({ id: result.id });
+    if (result.reason === "location_not_found") return Response.json({ error: "That location wasn't found for this client." }, { status: 400 });
     if (result.reason === "client_not_found") return Response.json({ error: "Client not found." }, { status: 404 });
     if (result.reason === "compare_not_found") {
       return Response.json(

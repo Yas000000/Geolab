@@ -134,7 +134,21 @@ export interface RunCounts {
   training: number;
 }
 
+/** One location's chapter in an "All locations" report: its own data and takeaways. */
+export interface LocationReport {
+  key: string; // ClientLocation id, or "none" (answers searched with no location)
+  label: string;
+  data: MonthlyReportData;
+  takeaways: ReportTakeaways;
+}
+
 export interface MonthlyReportData {
+  // A report for one location (its answers only); unset for a whole-client report.
+  location?: { key: string; label: string } | null;
+  // "All locations" for a client with locations: every location in its own chapter (side
+  // by side on the Locations at a Glance page). This report's own figures then cover only
+  // what isn't split by location (traffic, crawler access).
+  byLocation?: LocationReport[];
   period: ReportPeriod;
   compare: ReportComparison;
   clientName: string;
@@ -200,7 +214,8 @@ export function normalizeReportData(raw: unknown): MonthlyReportData {
   const prompts = d.prompts.gainsIncludeNewWins
     ? d.prompts
     : { ...d.prompts, gainsIncludeNewWins: true, rankGains: [...d.prompts.newWins, ...d.prompts.rankGains].sort(byBestRank) };
-  return zeroFillBenchmark({ ...d, competitors, prompts });
+  const out = zeroFillBenchmark({ ...d, competitors, prompts });
+  return d.byLocation ? { ...out, byLocation: d.byLocation.map((l) => ({ ...l, data: normalizeReportData(l.data) })) } : out;
 }
 
 function fromMonthReport(raw: LegacyReport): MonthlyReportData {
@@ -241,6 +256,7 @@ async function loadRuns(clientId: string, where: RunWhere) {
         where: { responseText: { not: "" } },
         select: {
           platform: true,
+          locationId: true,
           modelId: true,
           responseText: true, // an answer naming the client's site counts as citing it (citations.ts)
           prompt: { select: { text: true, category: true } },
@@ -265,6 +281,12 @@ const inPeriod = (p: ReportPeriod): RunWhere => {
 };
 
 type RunRows = Awaited<ReturnType<typeof loadRuns>>;
+
+/** Runs with only one location's answers ("none" = answers searched with no location); undefined = all. */
+function onlyLocation(runs: RunRows, locationKey: string | undefined): RunRows {
+  if (locationKey === undefined) return runs;
+  return runs.map((r) => ({ ...r, rawResponses: r.rawResponses.filter((x) => (x.locationId ?? "none") === locationKey) }));
+}
 type Check = RunRows[number]["rawResponses"][number];
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, c) => a + c, 0) / xs.length : null);
@@ -736,6 +758,7 @@ export async function buildMonthlyReportData(
   clientId: string,
   period: ReportPeriod,
   spec: CompareSpec,
+  locationKey?: string, // one location's answers only (see onlyLocation); the benchmark is the same for every location
 ): Promise<MonthlyReportData | "client_not_found" | "compare_not_found"> {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
@@ -745,12 +768,14 @@ export async function buildMonthlyReportData(
   const compare = await resolveCompare(clientId, period, spec);
   if (!compare) return "compare_not_found";
 
-  const [curRuns, curTraffic, prevTraffic, crawl] = await Promise.all([
+  const [allCurRuns, curTraffic, prevTraffic, crawl] = await Promise.all([
     loadRuns(clientId, inPeriod(period)),
     trafficTotals(clientId, period),
     compare.info.trafficPeriod ? trafficTotals(clientId, compare.info.trafficPeriod) : null,
     latestCrawlCheck(clientId),
   ]);
+  const curRuns = onlyLocation(allCurRuns, locationKey);
+  compare.runs = onlyLocation(compare.runs, locationKey);
   const curChecks = curRuns.flatMap((r) => r.rawResponses);
   const prevChecks = compare.runs.flatMap((r) => r.rawResponses);
   const fromRuns = compare.info.kind !== "benchmark";
@@ -963,7 +988,7 @@ async function ask(prompt: string): Promise<string | null> {
 
 const r1 = (n: number | null | undefined) => (n == null ? null : Math.round(n * 10) / 10);
 
-export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaways> {
+export async function writeTakeaways(d: MonthlyReportData, only?: (keyof ReportTakeaways)[]): Promise<ReportTakeaways> {
   const brand = d.brandName ?? d.clientName;
   const c = d.compare;
   const isBenchmark = c.kind === "benchmark";
@@ -1066,7 +1091,8 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     ]);
   }
 
-  const results = await Promise.all(jobs.map(async ([k, prompt]) => [k, await ask(prompt).catch(() => null)] as const));
+  const wanted = only ? jobs.filter(([k]) => only.includes(k as keyof ReportTakeaways)) : jobs;
+  const results = await Promise.all(wanted.map(async ([k, prompt]) => [k, await ask(prompt).catch(() => null)] as const));
   const out: ReportTakeaways = {};
   for (const [k, text] of results) if (text) out[k] = text;
   return out;
@@ -1078,20 +1104,58 @@ export function compareListLabel(c: ReportComparison): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Generates a report, replacing any saved report for the same period (its link stays the same). */
+/**
+ * Generates a report, replacing any saved report for the same period and location (its
+ * link stays the same). location: "" = the whole client -- for a client with locations,
+ * every location in its own chapter (each with its own figures and takeaways, never
+ * blended); a ClientLocation id = that location's answers only; "none" = answers
+ * searched with no location.
+ */
 export async function generateMonthlyReport(
   clientId: string,
   period: ReportPeriod,
   spec: CompareSpec,
-): Promise<{ ok: true; id: string } | { ok: false; reason: "client_not_found" | "compare_not_found" | "no_data" }> {
-  const data = await buildMonthlyReportData(clientId, period, spec);
-  if (typeof data === "string") return { ok: false, reason: data };
-  if (data.scorecard.current.checks === 0 && !data.traffic) return { ok: false, reason: "no_data" };
-  const takeaways = await writeTakeaways(data);
+  location = "",
+): Promise<{ ok: true; id: string } | { ok: false; reason: "client_not_found" | "compare_not_found" | "no_data" | "location_not_found" }> {
+  const locations = await prisma.clientLocation.findMany({ where: { clientId }, orderBy: { position: "asc" } });
+  const labelOf = (key: string) => (key === "none" ? "No location" : locations.find((l) => l.id === key)?.label);
+  if (location && !labelOf(location)) return { ok: false, reason: "location_not_found" };
+
+  let data: MonthlyReportData;
+  let takeaways: ReportTakeaways;
+  if (location) {
+    const one = await buildMonthlyReportData(clientId, period, spec, location);
+    if (typeof one === "string") return { ok: false, reason: one };
+    data = { ...one, location: { key: location, label: labelOf(location)! } };
+    if (data.scorecard.current.checks === 0 && !data.traffic) return { ok: false, reason: "no_data" };
+    takeaways = await writeTakeaways(data);
+  } else if (locations.length) {
+    const whole = await buildMonthlyReportData(clientId, period, spec);
+    if (typeof whole === "string") return { ok: false, reason: whole };
+    if (whole.scorecard.current.checks === 0 && !whole.traffic) return { ok: false, reason: "no_data" };
+    // Every location with answers in the period (plus "No location" when some were searched with none).
+    const keys = [...locations.map((l) => l.id), "none"];
+    const chapters: LocationReport[] = [];
+    for (const key of keys) {
+      const one = await buildMonthlyReportData(clientId, period, spec, key);
+      if (typeof one === "string") return { ok: false, reason: one };
+      if (one.scorecard.current.checks === 0) continue;
+      const withLabel = { ...one, location: { key, label: labelOf(key)! } };
+      chapters.push({ key, label: labelOf(key)!, data: withLabel, takeaways: await writeTakeaways(withLabel) });
+    }
+    data = { ...whole, byLocation: chapters };
+    takeaways = await writeTakeaways(whole, ["traffic"]);
+  } else {
+    const one = await buildMonthlyReportData(clientId, period, spec);
+    if (typeof one === "string") return { ok: false, reason: one };
+    if (one.scorecard.current.checks === 0 && !one.traffic) return { ok: false, reason: "no_data" };
+    data = one;
+    takeaways = await writeTakeaways(data);
+  }
   const fields = { data: data as unknown as object, takeaways, compareLabel: compareListLabel(data.compare) };
   const row = await prisma.monthlyReport.upsert({
-    where: { clientId_periodStart_periodEnd: { clientId, periodStart: period.start, periodEnd: period.end } },
-    create: { clientId, periodStart: period.start, periodEnd: period.end, ...fields },
+    where: { clientId_periodStart_periodEnd_location: { clientId, periodStart: period.start, periodEnd: period.end, location } },
+    create: { clientId, periodStart: period.start, periodEnd: period.end, location, ...fields },
     update: fields,
   });
   return { ok: true, id: row.id };

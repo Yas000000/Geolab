@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +9,7 @@ import {
   type CompareScore,
   type CompetitorFigures,
   type EngineRank,
+  type MonthlyReportData,
   type ReportTakeaways,
   type ScoreMetrics,
   type TrafficTotals,
@@ -25,7 +27,7 @@ async function getReport(id: string) {
 export async function generateMetadata({ params }: { params: Promise<{ reportId: string }> }): Promise<Metadata> {
   const report = await getReport((await params).reportId);
   const d = report ? normalizeReportData(report.data) : undefined;
-  return { title: d ? `${d.clientName}: GEO Report, ${d.period.label}` : "GEO Report" };
+  return { title: d ? `${d.clientName}: GEO Report, ${d.period.label}${d.location ? `, ${d.location.label}` : ""}` : "GEO Report" };
 }
 
 const RED = "#EC1912";
@@ -230,21 +232,30 @@ function fig(f: CompetitorFigures | null, k: keyof CompetitorFigures) {
   return v == null ? "n/a" : k === "position" ? v.toFixed(1) : `${v.toFixed(1)}%`;
 }
 
-export default async function MonthlyReportPage({ params }: { params: Promise<{ reportId: string }> }) {
-  const { reportId } = await params;
-  const report = await getReport(reportId);
-  if (!report) notFound();
-  const d = normalizeReportData(report.data);
-  const t = report.takeaways as unknown as ReportTakeaways;
+/**
+ * The sections drawn from AI answers: scorecard, platforms, prompt movement,
+ * competitors and citations. An All locations report draws them once per
+ * location (each location's own figures and takeaways, its name in each
+ * title). A plain function (not a component), called in page order so the
+ * section numbers in `counter` run through the whole report.
+ */
+function answerSections({
+  d,
+  t,
+  counter,
+  location,
+}: {
+  d: MonthlyReportData;
+  t: ReportTakeaways;
+  counter: { n: number };
+  location?: string;
+}) {
   const brand = d.brandName ?? d.clientName;
   const c = d.compare;
   const P = d.period.label;
   const isBenchmark = c.kind === "benchmark";
   const cur = d.scorecard.current;
   const prev = d.scorecard.previous;
-  const prevTraffic: TrafficTotals | null | undefined = d.traffic?.previous;
-  const trafficLabel = c.trafficPeriod?.label ?? c.label;
-  const trafficNote = d.traffic ? trafficCaveat(d.traffic, P, trafficLabel) : null;
   // How the comparison reads inside a sentence: "in September 2026", "at the ISA benchmark".
   const then = isBenchmark ? `at the ${c.source} benchmark` : c.kind === "firstCrawl" ? "at the first crawl" : `in ${c.label}`;
   const missing = isBenchmark ? "Not part of the benchmark" : `No data ${then}`;
@@ -291,48 +302,13 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
   const engineCols = d.prompts.engines ?? [];
   const engineThen = d.prompts.compared && !!d.prompts.thenByEngine;
   const combinedThen = d.prompts.compared && !d.prompts.thenByEngine && engineCols.length > 0;
-  let n = 0;
+  const titled = (x: string) => (location ? `${x}: ${location}` : x);
 
   return (
-    <div className="rpt min-h-screen bg-zinc-200 py-6">
-      <style>{PRINT_CSS}</style>
-      <div className="rpt-toolbar mx-auto mb-4 flex w-[8.5in] items-center justify-between">
-        <a href={`/clients/${report.clientId}/reports`} className="text-sm text-zinc-600 hover:underline">
-          ← Reports
-        </a>
-        <PrintButton />
-      </div>
-
-      {/* Cover */}
-      <section className="rpt-page rpt-cover">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/interdependence-logo.jpg" alt="Interdependence" className="absolute top-[0.6in] left-[0.5in] w-[3in]" />
-        <div className="mb-8 text-[11px] font-semibold tracking-[0.18em] text-white/80 uppercase">GEO Report</div>
-        <h1 className="text-[44px] leading-tight font-bold tracking-tight">{d.clientName}</h1>
-        <p className="mt-2 text-[17px] text-white/85">AI Visibility Report for {P}</p>
-        <div className="my-10 h-[3px] w-[60px] bg-white" />
-        <div className="space-y-2 text-[13px] text-white/85">
-          {d.domain && (
-            <div>
-              <strong className="text-white">Website:</strong> {d.domain}
-            </div>
-          )}
-          <div>
-            <strong className="text-white">Period:</strong> {P} compared with {c.phrase}
-          </div>
-          <div>
-            <strong className="text-white">AI platforms:</strong> {d.platforms.map((p) => p.label).join(", ") || "n/a"}
-          </div>
-        </div>
-        <div className="absolute right-[0.7in] bottom-[0.6in] left-[0.7in] flex justify-between border-t border-white/35 pt-4 text-[11px] text-white/75">
-          <span>Prepared by Interdependence</span>
-          <span>{P}</span>
-        </div>
-      </section>
-
+    <>
       {/* Executive Scorecard */}
       <section className="rpt-page">
-        <SectionHeader n={++n} title="Executive Scorecard" sub={`How often AI answers mention ${brand}, ${P} compared with ${c.phrase}.`} />
+        <SectionHeader n={++counter.n} title={titled("Executive Scorecard")} sub={`How often AI answers mention ${brand}, ${P} compared with ${c.phrase}.`} />
         {cur.checks === 0 ? (
           <p className="text-[13px] text-zinc-600">No AI answers were checked in {P}.</p>
         ) : (
@@ -371,8 +347,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {d.platforms.length > 0 && (
         <section className="rpt-page">
           <SectionHeader
-            n={++n}
-            title="Visibility by AI Platform"
+            n={++counter.n}
+            title={titled("Visibility by AI Platform")}
             sub={platformsCompared ? `How each AI platform's answers treated the brand in ${P}, compared with ${c.phrase}.` : `How each AI platform's answers treated the brand in ${P}.`}
           />
           <Table>
@@ -423,7 +399,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {/* Prompt Movement */}
       {cur.checks > 0 && (
         <section className="rpt-page">
-          <SectionHeader n={++n} title="Prompt Movement" sub={`Where ${brand} gained ground across the ${d.prompts.tracked} tracked prompts, and where a competitor still leads.`} />
+          <SectionHeader n={++counter.n} title={titled("Prompt Movement")} sub={`Where ${brand} gained ground across the ${d.prompts.tracked} tracked prompts, and where a competitor still leads.`} />
           {engineCols.length > 0 && (
             <p className="-mt-2 mb-4 text-[11px] text-zinc-500">
               {engineThen
@@ -517,8 +493,8 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {d.competitors.length > 0 && (
         <section className="rpt-page">
           <SectionHeader
-            n={++n}
-            title="Competitors"
+            n={++counter.n}
+            title={titled("Competitors")}
             sub={`The most mentioned brands in AI answers in ${P}${competitorsCompared ? `, compared with ${c.phrase}` : ""}.`}
           />
           <Table>
@@ -579,7 +555,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
       {/* Citations */}
       {d.citations && (
         <section className="rpt-page">
-          <SectionHeader n={++n} title="AI Citations" sub="The web pages AI answers linked to as sources. Only answers from live web search carry citations." />
+          <SectionHeader n={++counter.n} title={titled("AI Citations")} sub="The web pages AI answers linked to as sources. Only answers from live web search carry citations." />
           <div className="mb-5 grid grid-cols-3 gap-3">
             <StatCard
               label="Answers Citing Your Site"
@@ -657,12 +633,162 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
         </section>
       )}
 
+    </>
+  );
+}
+
+/** All locations: each location's headline figures side by side, before their chapters. */
+function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n: number } }) {
+  const chapters = d.byLocation ?? [];
+  const isBenchmark = d.compare.kind === "benchmark";
+  const then = isBenchmark ? `at the ${d.compare.source} benchmark` : d.compare.kind === "firstCrawl" ? "at the first crawl" : `in ${d.compare.label}`;
+  const metric = (l: (typeof chapters)[number]) => {
+    const cards = scoreCards(l.data.scorecard.current, l.data.scorecard.previous, isBenchmark);
+    const cit = l.data.citations;
+    const citingThen =
+      cit?.previous?.ownSitePct ?? l.data.compare.ownSiteCitedPct ?? (l.data.compare.assumedZero?.includes("Answers Citing Your Site") ? 0 : null);
+    return [
+      ...cards,
+      ...(cit
+        ? [{ label: "Answers Citing Your Site", value: fmtPct(cit.current.ownSitePct), prev: citingThen != null ? fmtPct(citingThen) : null, diff: change(cit.current.ownSitePct, citingThen, "pts") }]
+        : []),
+    ];
+  };
+  const labels = chapters.length ? metric(chapters[0]).map((m) => m.label) : [];
+  return (
+    <section className="rpt-page">
+      <SectionHeader
+        n={++counter.n}
+        title="Locations at a Glance"
+        sub={`How often AI answers mention ${d.brandName ?? d.clientName} in each location, ${d.period.label}, searched as if from there.`}
+      />
+      <Table>
+        <thead className="bg-[#FAF5F5]">
+          <tr>
+            <th className={th}>Measure</th>
+            {chapters.map((l) => (
+              <th key={l.key} className={thR}>
+                {l.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {labels.map((label) => (
+            <tr key={label} className="border-t border-[#F0E6E6]">
+              <td className={`${td} font-semibold`}>{label}</td>
+              {chapters.map((l) => {
+                const m = metric(l).find((x) => x.label === label);
+                return (
+                  <td key={l.key} className={tdR}>
+                    <div className="font-semibold">{m?.value ?? "n/a"}</div>
+                    {m?.prev != null && (
+                      <div className="text-[10.5px] text-zinc-500">
+                        was {m.prev}
+                        {m.diff && <span className={`ml-1 font-semibold ${TONE_TEXT[m.diff.tone]}`}>{m.diff.text}</span>}
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          <tr className="border-t border-[#F0E6E6]">
+            <td className={td}>AI answers checked</td>
+            {chapters.map((l) => (
+              <td key={l.key} className={tdR}>
+                {fmtInt(l.data.scorecard.current.checks)}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </Table>
+      <p className="mt-4 text-[11px] leading-relaxed text-zinc-500">
+        Each location&apos;s answers were searched as if from there; the figures are never combined across locations. &quot;Was&quot;
+        is {then}
+        {isBenchmark ? ", the same benchmark for every location" : ""}. Each location&apos;s own chapter follows, with its platforms,
+        prompts, competitors and citations.
+      </p>
+    </section>
+  );
+}
+
+export default async function MonthlyReportPage({ params }: { params: Promise<{ reportId: string }> }) {
+  const { reportId } = await params;
+  const report = await getReport(reportId);
+  if (!report) notFound();
+  const d = normalizeReportData(report.data);
+  const t = report.takeaways as unknown as ReportTakeaways;
+  const c = d.compare;
+  const P = d.period.label;
+  const isBenchmark = c.kind === "benchmark";
+  const prevTraffic: TrafficTotals | null | undefined = d.traffic?.previous;
+  const trafficLabel = c.trafficPeriod?.label ?? c.label;
+  const trafficNote = d.traffic ? trafficCaveat(d.traffic, P, trafficLabel) : null;
+  // Section numbers run through the whole report, chapters included.
+  const counter = { n: 0 };
+
+  return (
+    <div className="rpt min-h-screen bg-zinc-200 py-6">
+      <style>{PRINT_CSS}</style>
+      <div className="rpt-toolbar mx-auto mb-4 flex w-[8.5in] items-center justify-between">
+        <a href={`/clients/${report.clientId}/reports`} className="text-sm text-zinc-600 hover:underline">
+          ← Reports
+        </a>
+        <PrintButton />
+      </div>
+
+      {/* Cover */}
+      <section className="rpt-page rpt-cover">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/interdependence-logo.jpg" alt="Interdependence" className="absolute top-[0.6in] left-[0.5in] w-[3in]" />
+        <div className="mb-8 text-[11px] font-semibold tracking-[0.18em] text-white/80 uppercase">GEO Report</div>
+        <h1 className="text-[44px] leading-tight font-bold tracking-tight">{d.clientName}</h1>
+        <p className="mt-2 text-[17px] text-white/85">AI Visibility Report for {P}</p>
+        <div className="my-10 h-[3px] w-[60px] bg-white" />
+        <div className="space-y-2 text-[13px] text-white/85">
+          {d.domain && (
+            <div>
+              <strong className="text-white">Website:</strong> {d.domain}
+            </div>
+          )}
+          <div>
+            <strong className="text-white">Period:</strong> {P} compared with {c.phrase}
+          </div>
+          {(d.location || d.byLocation) && (
+            <div>
+              <strong className="text-white">{d.byLocation ? "Locations" : "Location"}:</strong>{" "}
+              {d.byLocation ? d.byLocation.map((l) => l.label).join(", ") : d.location?.label}
+              {" (answers searched as if from there)"}
+            </div>
+          )}
+          <div>
+            <strong className="text-white">AI platforms:</strong> {d.platforms.map((p) => p.label).join(", ") || "n/a"}
+          </div>
+        </div>
+        <div className="absolute right-[0.7in] bottom-[0.6in] left-[0.7in] flex justify-between border-t border-white/35 pt-4 text-[11px] text-white/75">
+          <span>Prepared by Interdependence</span>
+          <span>{P}</span>
+        </div>
+      </section>
+
+      {d.byLocation ? (
+        <>
+          {locationsAtAGlance({ d, counter })}
+          {d.byLocation.map((l) => (
+            <Fragment key={l.key}>{answerSections({ d: l.data, t: l.takeaways, counter, location: l.label })}</Fragment>
+          ))}
+        </>
+      ) : (
+        answerSections({ d, t, counter, location: d.location?.label })
+      )}
+
       {/* Traffic + crawler access */}
       {(d.traffic || d.crawl) && (
         <section className="rpt-page">
           {d.traffic && (
             <>
-              <SectionHeader n={++n} title="AI Platform Traffic" sub="Visits to the website that Google Analytics attributes to AI platforms." />
+              <SectionHeader n={++counter.n} title="AI Platform Traffic" sub="Visits to the website that Google Analytics attributes to AI platforms." />
               <Table>
                 <thead className="bg-[#FAF5F5]">
                   <tr>
@@ -705,7 +831,7 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
               {d.traffic ? (
                 <h3 className="mb-1 text-[16px] font-bold text-[#1E1E1E]">AI Crawler Access</h3>
               ) : (
-                <SectionHeader n={++n} title="AI Crawler Access" sub="Whether each AI platform can reach the website." />
+                <SectionHeader n={++counter.n} title="AI Crawler Access" sub="Whether each AI platform can reach the website." />
               )}
               <p className="mb-2 text-[11px] text-zinc-500">
                 Checked{" "}

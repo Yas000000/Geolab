@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ModelFilter } from "@/components/model-filter";
+import { LocationFilter } from "@/components/location-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
@@ -20,6 +21,7 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       benchmarkSnapshots: { select: { snapshotDate: true } },
+      locations: { orderBy: { position: "asc" }, select: { id: true, label: true } },
       brands: { where: { isClientBrand: true }, select: { name: true, aliases: { select: { alias: true } } } },
       runs: {
         where: { status: "COMPLETE" },
@@ -33,6 +35,7 @@ async function getClient(id: string) {
             select: {
               id: true,
               platform: true,
+              locationId: true,
               responseText: true, // an answer naming the client's site counts as citing it
               prompt: { select: { text: true, category: true } },
               citations: {
@@ -55,11 +58,13 @@ function inWindow(date: Date, range: DateRange | null): boolean {
   return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
 }
 
-function answersIn(client: ClientData, range: DateRange | null, platform: string | undefined): CitedAnswer[] {
+// location: one location's answers (its id; "" = answers searched with no location), or every answer.
+function answersIn(client: ClientData, range: DateRange | null, platform: string | undefined, location?: string): CitedAnswer[] {
   return citationTrackedRuns(client.runs)
     .filter((run) => inWindow(run.startedAt, range))
     .flatMap((run) => run.rawResponses)
     .filter((r) => !platform || r.platform === platform)
+    .filter((r) => location === undefined || (r.locationId ?? "") === location)
     .map((r) => ({
       platform: r.platform,
       promptText: r.prompt.text,
@@ -143,6 +148,19 @@ export default async function ClientCitationsPage({
   const client = await getClient(id);
   if (!client) notFound();
 
+  // Location dropdown (clients tracked in several places): "All locations" shows each one side
+  // by side; one location filters the whole page to it. Same entries as the Rankings tab.
+  const locationParam = typeof sp.location === "string" ? sp.location : "";
+  const hasUnlocated = citationTrackedRuns(client.runs).some((run) => run.rawResponses.some((r) => !r.locationId));
+  const locations = client.locations.length
+    ? [
+        ...client.locations.map((l) => ({ id: l.id, key: l.id, label: l.label })),
+        ...(hasUnlocated ? [{ id: "", key: "none", label: "No location" }] : []),
+      ]
+    : [];
+  const selected = locations.find((l) => l.key === locationParam) ?? null;
+  const locationId = selected ? selected.id : undefined;
+
   const ownDomain = siteDomain(client.domain);
   const allTimeRange = geoAllTimeRange(
     client.runs.map((r) => r.startedAt),
@@ -152,9 +170,9 @@ export default async function ClientCitationsPage({
     new Set(citationTrackedRuns(client.runs).flatMap((run) => run.rawResponses.map((r) => r.platform))),
   ).sort();
 
-  const primaryAnswers = answersIn(client, dateRange, platformFilter);
+  const primaryAnswers = answersIn(client, dateRange, platformFilter, locationId);
   const summary = summarizeCitations(primaryAnswers, ownDomain);
-  const comparisonAnswers = comparisonRange ? answersIn(client, comparisonRange, platformFilter) : [];
+  const comparisonAnswers = comparisonRange ? answersIn(client, comparisonRange, platformFilter, locationId) : [];
   const comparison = comparisonAnswers.length ? summarizeCitations(comparisonAnswers, ownDomain) : null;
   const comparisonShare = new Map(comparison?.sites.map((s) => [s.domain, s.sharePct]) ?? []);
   const ownPages = summary.pages.filter((p) => p.isOwn);
@@ -183,7 +201,8 @@ export default async function ClientCitationsPage({
   );
   const backingScope = spanRuns
     .flatMap((run) => run.rawResponses)
-    .filter((r) => r.platform !== "PERPLEXITY" && (!platformFilter || r.platform === platformFilter));
+    .filter((r) => r.platform !== "PERPLEXITY" && (!platformFilter || r.platform === platformFilter))
+    .filter((r) => locationId === undefined || (r.locationId ?? "") === locationId);
   const backingTexts =
     backingScope.length && brandNames.length
       ? await prisma.rawResponse.findMany({
@@ -226,10 +245,36 @@ export default async function ClientCitationsPage({
           {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
         </div>
         <div className="flex flex-wrap items-start gap-2">
+          {locations.length > 0 && <LocationFilter locations={locations.map((l) => ({ key: l.key, label: l.label }))} />}
           <ModelFilter platforms={platformsAvailable.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p }))} />
           <DateRangePicker allTimeRange={allTimeRange} />
         </div>
       </header>
+
+      {selected && (
+        <p className="-mt-3 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Showing <span className="font-medium text-zinc-900 dark:text-zinc-100">{selected.label}</span> only
+          {selected.id ? ": answers searched as if from there." : ": answers searched with no location set."}
+        </p>
+      )}
+
+      {locations.length > 0 && !selected ? (
+        <AllLocations
+          views={locations.map((l) => {
+            const answers = answersIn(client, dateRange, platformFilter, l.id);
+            const before = comparisonRange ? answersIn(client, comparisonRange, platformFilter, l.id) : [];
+            return {
+              key: l.key,
+              label: l.label,
+              summary: summarizeCitations(answers, ownDomain),
+              comparison: before.length ? summarizeCitations(before, ownDomain) : null,
+            };
+          })}
+          ownDomain={ownDomain}
+          platformFilter={platformFilter}
+        />
+      ) : (
+      <>
 
       {summary.answers === 0 ? (
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
@@ -568,6 +613,100 @@ export default async function ClientCitationsPage({
           </section>
         </>
       )}
+      </>
+      )}
     </div>
+  );
+}
+
+/**
+ * All locations: each location's citation cards and most cited sites side by side
+ * (never blended). The detailed tables (pages, what backs your mentions, by prompt)
+ * are one location at a time: pick it in the Location dropdown.
+ */
+function AllLocations({
+  views,
+  ownDomain,
+  platformFilter,
+}: {
+  views: { key: string; label: string; summary: ReturnType<typeof summarizeCitations>; comparison: ReturnType<typeof summarizeCitations> | null }[];
+  ownDomain: string | null;
+  platformFilter: string | undefined;
+}) {
+  const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
+  const cardLabel = "text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+  const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
+  return (
+    <>
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Citations by Location</h2>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {views.map((v) => {
+            const delta = v.comparison ? v.summary.ownSitePct - v.comparison.ownSitePct : null;
+            const share = new Map(v.comparison?.sites.map((s) => [s.domain, s.sharePct]) ?? []);
+            return (
+              <div key={v.key} className="min-w-0 space-y-3">
+                <div className={card}>
+                  <div className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</div>
+                  <div className={cardLabel}>Answers Citing Your Site</div>
+                  <div className="mt-1 flex items-baseline gap-3">
+                    <div className="text-3xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+                      {v.summary.answers ? `${v.summary.ownSitePct.toFixed(1)}%` : "n/a"}
+                    </div>
+                    {delta != null && (
+                      <span className="text-sm font-medium tabular-nums">
+                        <Delta value={delta} />
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                    {v.summary.answersCitingOwnSite} of {v.summary.answers} Live Search answer{v.summary.answers === 1 ? "" : "s"}
+                    {ownDomain ? ` link to ${ownDomain}` : ""} · {v.summary.sites.length} sites cited
+                    {platformFilter ? ` · ${PLATFORM_LABEL[platformFilter] ?? platformFilter} only` : ""}
+                  </div>
+                </div>
+                {v.summary.sites.length > 0 ? (
+                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-sm">
+                      <thead className={thead}>
+                        <tr>
+                          <th className="px-2 py-2 font-medium">Rank</th>
+                          <th className="px-2 py-2 font-medium">Site</th>
+                          <th className="px-2 py-2 text-right font-medium tabular-nums">Share</th>
+                          {v.comparison && <th className="px-2 py-2 text-right font-medium tabular-nums">Change</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                        {v.summary.sites.slice(0, 10).map((s, i) => (
+                          <tr key={s.domain} className={s.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
+                            <td className="px-2 py-2 tabular-nums text-zinc-500 dark:text-zinc-400">#{i + 1}</td>
+                            <td className="px-2 py-2 font-medium break-all text-zinc-900 dark:text-zinc-100">
+                              {s.domain}
+                              {s.isOwn && <YouBadge />}
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums">{s.sharePct.toFixed(1)}%</td>
+                            {v.comparison && (
+                              <td className="px-2 py-2 text-right tabular-nums">
+                                <Delta value={s.sharePct - (share.get(s.domain) ?? 0)} />
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">No Live Search answers with citations here in this range.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          Share is the % of a location&apos;s answers that cite the site at least once. Top 10 sites per location. Pick a
+          location above for its cited pages, what backs your mentions and citations by prompt.
+        </p>
+      </section>
+    </>
   );
 }
