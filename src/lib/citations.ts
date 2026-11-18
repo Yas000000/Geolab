@@ -8,6 +8,10 @@ export interface CitedAnswer {
   promptText: string;
   promptCategory: string | null;
   citations: { url: string; title: string | null; domain: string }[];
+  // The answer's text: one that names the client's own site (macumira.com, a subdomain)
+  // counts as citing it even when the site isn't in its source list (the user's rule,
+  // 2026-11-18: the client's domain always counts as a mention and a citation).
+  responseText?: string;
 }
 
 export interface CitedSiteRow {
@@ -66,6 +70,13 @@ export function isOwnSite(citationDomain: string, ownDomain: string | null): boo
   return d === ownDomain || d.endsWith(`.${ownDomain}`);
 }
 
+/** True when the text names the client's own site or a subdomain of it ("anz.macumira.com/patients"). */
+export function textNamesOwnSite(text: string | undefined, ownDomain: string | null): boolean {
+  if (!text || !ownDomain) return false;
+  const escaped = ownDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9.-])([a-z0-9-]+\\.)*${escaped}(?![a-z0-9-])`, "i").test(text);
+}
+
 export function summarizeCitations(answers: CitedAnswer[], ownDomain: string | null): CitationSummary {
   const sites = new Map<string, { answers: number; byPlatform: Record<string, number> }>();
   const pages = new Map<string, CitedPageRow>();
@@ -75,6 +86,9 @@ export function summarizeCitations(answers: CitedAnswer[], ownDomain: string | n
   for (const a of answers) {
     if (a.citations.length) answersWithCitations += 1;
     const domainsHere = new Set(a.citations.map((c) => c.domain.toLowerCase()));
+    if (ownDomain && ![...domainsHere].some((d) => isOwnSite(d, ownDomain)) && textNamesOwnSite(a.responseText, ownDomain)) {
+      domainsHere.add(ownDomain);
+    }
     if ([...domainsHere].some((d) => isOwnSite(d, ownDomain))) answersCitingOwnSite += 1;
     for (const d of domainsHere) {
       const s = sites.get(d) ?? { answers: 0, byPlatform: {} };

@@ -28,6 +28,8 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       locations: { orderBy: { position: "asc" } },
+      // The client's own brand: an answer that only cites its site still counts on its row.
+      brands: { where: { isClientBrand: true }, select: { id: true, name: true }, take: 1 },
       runs: {
         orderBy: { startedAt: "asc" },
         include: {
@@ -496,10 +498,11 @@ function buildDashboardData(
   const hasComparison = !!comparisonRange && comparisonTotal > 0;
 
   // Same formulas as the client report's competitor table (src/lib/competitor-table.ts).
+  const ownBrand = client.brands[0] ? { key: client.brands[0].id, name: client.brands[0].name } : null;
   const comparisonVisibility = hasComparison
-    ? new Map(competitorStats(comparisonMatching).map((s) => [s.key, s.visibilityPct]))
+    ? new Map(competitorStats(comparisonMatching, ownBrand).map((s) => [s.key, s.visibilityPct]))
     : null;
-  const brandTable: BrandRow[] = competitorStats(primaryMatching).map((s) => ({
+  const brandTable: BrandRow[] = competitorStats(primaryMatching, ownBrand).map((s) => ({
     key: s.key,
     name: s.name,
     isClientBrand: s.isClientBrand,
@@ -534,6 +537,11 @@ function buildDashboardData(
         if (!seen.has(key)) answersWith.set(key, (answersWith.get(key) ?? 0) + 1);
         seen.add(key);
         if (m.position != null) positions.set(key, [...(positions.get(key) ?? []), m.position]);
+      }
+      if (ownBrand && r.parsedResult?.clientBrandMentioned && !seen.has(ownBrand.key)) {
+        counts.set(ownBrand.key, (counts.get(ownBrand.key) ?? 0) + 1);
+        answersWith.set(ownBrand.key, (answersWith.get(ownBrand.key) ?? 0) + 1);
+        positions.set(ownBrand.key, [...(positions.get(ownBrand.key) ?? []), r.parsedResult.clientBrandRank ?? 1]);
       }
     }
     if (counts.size === 0) continue; // no answers (or no brands) for this filter in this crawl

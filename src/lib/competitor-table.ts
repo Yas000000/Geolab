@@ -4,9 +4,9 @@
 //   Position       average list position when mentioned
 //   Visibility     answers that mention it / answers (each answer once, 2026-11-18:
 //                  counting mentions let an answer naming a brand twice, e.g. under
-//                  two of its names, push visibility past 100% on few answers). Every
-//                  brand, the client included, counts answers that NAME it; the
-//                  headline Visibility Score also counts answers citing the client's site.
+//                  two of its names, push visibility past 100% on few answers). The
+//                  client's row also counts answers that only cite its site (the user's
+//                  rule: its domain always counts as a mention), matching the headline.
 //   Share of Voice mentions / all brands' mentions
 
 export interface MentionLike {
@@ -16,7 +16,9 @@ export interface MentionLike {
 }
 
 export interface AnswerLike {
-  parsedResult: { mentions: MentionLike[] } | null;
+  // clientBrandMentioned / clientBrandRank: the answer mentions the client, counting its site
+  // cited or named (the user's rule, 2026-11-18: "always count macumira.com as a mention").
+  parsedResult: { mentions: MentionLike[]; clientBrandMentioned?: boolean; clientBrandRank?: number | null } | null;
 }
 
 export interface CompetitorStat {
@@ -29,8 +31,23 @@ export interface CompetitorStat {
   sharePct: number;
 }
 
-export function competitorStats(answers: AnswerLike[]): CompetitorStat[] {
+/**
+ * `client`: the client's own brand, so an answer that mentions the client only by citing
+ * its site (it has no Mention row) still counts on the client's row, as one mention at the
+ * answer's client rank (#1 for a site-only mention). Without it, the client is found from
+ * the answers' own mentions.
+ */
+export function competitorStats(answers: AnswerLike[], client?: { key: string; name: string } | null): CompetitorStat[] {
   const acc = new Map<string, { name: string; isClientBrand: boolean; appearances: number; answers: number; positions: number[] }>();
+  const own =
+    client ??
+    (() => {
+      for (const r of answers) {
+        const m = r.parsedResult?.mentions.find((x) => x.brand?.isClientBrand);
+        if (m?.brand) return { key: m.brand.id, name: m.brand.name };
+      }
+      return null;
+    })();
   for (const r of answers) {
     const seen = new Set<string>();
     for (const m of r.parsedResult?.mentions ?? []) {
@@ -45,8 +62,18 @@ export function competitorStats(answers: AnswerLike[]): CompetitorStat[] {
       if (m.position != null) e.positions.push(m.position);
       acc.set(key, e);
     }
+    if (own && r.parsedResult?.clientBrandMentioned && !seen.has(own.key)) {
+      const e = acc.get(own.key) ?? { name: own.name, isClientBrand: true, appearances: 0, answers: 0, positions: [] };
+      e.appearances += 1;
+      e.answers += 1;
+      e.positions.push(r.parsedResult.clientBrandRank ?? 1);
+      acc.set(own.key, e);
+    }
   }
   const totalAppearances = [...acc.values()].reduce((a, e) => a + e.appearances, 0);
+  // The client's visibility is exactly the headline's: the answers marked as mentioning it.
+  const flagged = answers.some((r) => r.parsedResult?.clientBrandMentioned !== undefined);
+  const clientAnswers = answers.filter((r) => r.parsedResult?.clientBrandMentioned).length;
   return [...acc.entries()]
     .map(([key, e]) => ({
       key,
@@ -54,7 +81,7 @@ export function competitorStats(answers: AnswerLike[]): CompetitorStat[] {
       isClientBrand: e.isClientBrand,
       appearances: e.appearances,
       avgPosition: e.positions.length ? e.positions.reduce((a, c) => a + c, 0) / e.positions.length : null,
-      visibilityPct: answers.length ? (e.answers / answers.length) * 100 : 0,
+      visibilityPct: answers.length ? ((own && key === own.key && flagged ? clientAnswers : e.answers) / answers.length) * 100 : 0,
       sharePct: totalAppearances ? (e.appearances / totalAppearances) * 100 : 0,
     }))
     .sort((a, b) => b.appearances - a.appearances);

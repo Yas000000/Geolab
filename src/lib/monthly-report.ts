@@ -242,6 +242,7 @@ async function loadRuns(clientId: string, where: RunWhere) {
         select: {
           platform: true,
           modelId: true,
+          responseText: true, // an answer naming the client's site counts as citing it (citations.ts)
           prompt: { select: { text: true, category: true } },
           citations: { orderBy: { position: "asc" }, select: { url: true, title: true, domain: true } },
           parsedResult: {
@@ -436,15 +437,16 @@ function competitorRows(
   current: Check[],
   previous: Check[] | null,
   benchmark: BenchmarkForRows | null,
+  ownBrand: { key: string; name: string } | null,
 ): CompetitorRow[] {
-  const cur = competitorStats(current);
+  const cur = competitorStats(current, ownBrand);
   const rankOf = new Map(cur.map((s, i) => [s.key, i + 1]));
   const figures = (s: { avgPosition: number | null; visibilityPct: number; sharePct: number }): CompetitorFigures => ({
     position: s.avgPosition,
     visibilityPct: s.visibilityPct,
     sharePct: s.sharePct,
   });
-  const prev = previous && previous.length ? new Map(competitorStats(previous).map((s) => [s.key, s])) : null;
+  const prev = previous && previous.length ? new Map(competitorStats(previous, ownBrand).map((s) => [s.key, s])) : null;
   // Benchmark rows by the brand they matched (the first, i.e. largest share, wins if two match one brand).
   const fromBenchmark = new Map<string, BenchmarkCompetitorRow>();
   for (const b of benchmark?.list ?? []) {
@@ -486,7 +488,13 @@ function citationSection(current: RunRows, previous: RunRows, ownDomain: string 
     citationTrackedRuns(runs)
       .flatMap((run) => run.rawResponses)
       .filter((c) => isLiveSearchModel(c.modelId))
-      .map((c) => ({ platform: c.platform, promptText: c.prompt.text, promptCategory: c.prompt.category, citations: c.citations }));
+      .map((c) => ({
+        platform: c.platform,
+        promptText: c.prompt.text,
+        promptCategory: c.prompt.category,
+        citations: c.citations,
+        responseText: c.responseText,
+      }));
   const curAnswers = toAnswers(current);
   if (!curAnswers.length) return null;
   const cur = summarizeCitations(curAnswers, ownDomain);
@@ -731,7 +739,7 @@ export async function buildMonthlyReportData(
 ): Promise<MonthlyReportData | "client_not_found" | "compare_not_found"> {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    select: { name: true, domain: true, brands: { where: { isClientBrand: true }, select: { name: true }, take: 1 } },
+    select: { name: true, domain: true, brands: { where: { isClientBrand: true }, select: { id: true, name: true }, take: 1 } },
   });
   if (!client) return "client_not_found";
   const compare = await resolveCompare(clientId, period, spec);
@@ -766,7 +774,8 @@ export async function buildMonthlyReportData(
       where: { clientId },
       select: { id: true, name: true, aliases: { select: { alias: true } } },
     });
-    const weight = new Map(competitorStats(curChecks).map((s) => [s.key, s.appearances]));
+    const ownBrand = client.brands[0] ? { key: client.brands[0].id, name: client.brands[0].name } : null;
+    const weight = new Map(competitorStats(curChecks, ownBrand).map((s) => [s.key, s.appearances]));
     const matches = matchBenchmarkNames(
       compare.info.competitors.map((c) => c.name),
       brands.map((b) => ({ id: b.id, name: b.name, aliases: b.aliases.map((a) => a.alias) })),
@@ -801,7 +810,12 @@ export async function buildMonthlyReportData(
               : null,
         })),
     prompts: promptMoves(curChecks, fromRuns ? (prevChecks.length ? promptsThen(prevChecks) : null) : compare.prompts),
-    competitors: competitorRows(curChecks, fromRuns ? prevChecks : null, benchmark),
+    competitors: competitorRows(
+      curChecks,
+      fromRuns ? prevChecks : null,
+      benchmark,
+      client.brands[0] ? { key: client.brands[0].id, name: client.brands[0].name } : null,
+    ),
     citations: citationSection(curRuns, compare.runs, siteDomain(client.domain)),
     traffic: curTraffic ? { current: curTraffic, previous: prevTraffic } : null,
     crawl: crawl

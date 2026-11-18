@@ -33,6 +33,7 @@ async function getClient(id: string) {
             select: {
               id: true,
               platform: true,
+              responseText: true, // an answer naming the client's site counts as citing it
               prompt: { select: { text: true, category: true } },
               citations: {
                 orderBy: { position: "asc" },
@@ -64,6 +65,7 @@ function answersIn(client: ClientData, range: DateRange | null, platform: string
       promptText: r.prompt.text,
       promptCategory: r.prompt.category,
       citations: r.citations,
+      responseText: r.responseText,
     }));
 }
 
