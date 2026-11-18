@@ -17,7 +17,9 @@ const pipelineAgent = new Agent({ headersTimeout: 900_000, bodyTimeout: 900_000 
 interface PipelinePromptGroup {
   category: string;
   categoryLabel: string;
-  prompts: { text: string; score: number | null; reason: string; position: number }[];
+  // locationIds: the client's locations the prompt is tracked in, echoed back so the run's
+  // prompt list keeps them (getTrackedPromptSet copies the latest list into the next run).
+  prompts: { text: string; score: number | null; reason: string; position: number; locationIds?: string[] }[];
 }
 
 interface PipelineResultCell {
@@ -25,6 +27,7 @@ interface PipelineResultCell {
   promptText: string;
   category: string;
   platform: string;
+  locationId?: string | null; // the location it was searched from (Live Search with locations), else null
   modelId: string;
   responseText: string;
   error: string | null;
@@ -138,6 +141,7 @@ export async function callPipelineAndPersist(params: {
             category: group.category,
             text: p.text,
             position: p.position,
+            locationIds: p.locationIds ?? [],
           },
         }),
       ),
@@ -178,6 +182,7 @@ export async function callPipelineAndPersist(params: {
           runId,
           promptId: promptIdByPosition.get(r.promptPosition)!,
           platform: PLATFORM_MAP[r.platform as keyof typeof PLATFORM_MAP] as Platform,
+          locationId: r.locationId ?? null,
           modelId: r.modelId,
           responseText: r.responseText,
           citations: {

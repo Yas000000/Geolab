@@ -1,9 +1,29 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
+import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
+
+// A place the client is tracked in; Live Search asks each prompt once per location it's ticked for.
+interface LocationDraft {
+  country: string;
+  city: string;
+  label: string;
+}
+
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+const locationName = (l: LocationDraft) => {
+  const code = l.country.trim().toUpperCase();
+  return l.label.trim() || [l.city.trim(), /^[A-Z]{2}$/.test(code) ? countryName(code) : code].filter(Boolean).join(", ");
+};
 
 const PLATFORM_OPTIONS = [
   { key: "openai", label: "ChatGPT", disabled: false },
@@ -31,6 +51,11 @@ export default function NewClientPage() {
   const [ga4PropertyId, setGa4PropertyId] = useState("");
   const [gscSiteUrl, setGscSiteUrl] = useState("");
   const [platforms, setPlatforms] = useState<string[]>(["openai", "claude", "gemini"]);
+  const [locations, setLocations] = useState<LocationDraft[]>([]);
+  // Unticked locations per prompt (by promptKey); everything else is tracked everywhere.
+  const [unticked, setUnticked] = useState<Record<string, number[]>>({});
+  const parsed = useMemo(() => dedupePrompts(parsePromptsText(promptsText)).prompts, [promptsText]);
+  const validLocations = locations.filter((l) => /^[A-Z]{2}$/.test(l.country.trim().toUpperCase()));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +103,13 @@ export default function NewClientPage() {
           ga4PropertyId: ga4PropertyId || undefined,
           gscSiteUrl: gscSiteUrl || undefined,
           platforms,
+          locations: validLocations.map((l) => ({ country: l.country.trim().toUpperCase(), city: l.city || null, label: l.label || undefined })),
+          promptLocations: Object.fromEntries(
+            parsed.map((p) => [
+              promptKey(p.text),
+              validLocations.map((_, i) => i).filter((i) => !(unticked[promptKey(p.text)] ?? []).includes(i)),
+            ]),
+          ),
         }),
       });
       const data = await res.json();
@@ -150,6 +182,100 @@ export default function NewClientPage() {
               placeholder={PROMPTS_PLACEHOLDER}
             />
           </Field>
+
+          <Field
+            label="Locations"
+            hint="Optional. Live Search asks each prompt once per location below, as if searching from there. Leave empty to search wherever the AI platforms default to."
+          >
+            <div className="space-y-2">
+              {locations.map((l, i) => (
+                <div key={i} className="grid grid-cols-[6rem_1fr_1fr_auto] gap-2">
+                  <input
+                    value={l.country}
+                    maxLength={2}
+                    placeholder="CA"
+                    onChange={(e) => setLocations(locations.map((x, j) => (j === i ? { ...x, country: e.target.value } : x)))}
+                    className={`${inputClass} uppercase`}
+                    aria-label="Country code"
+                  />
+                  <input
+                    value={l.city}
+                    placeholder="City (optional)"
+                    onChange={(e) => setLocations(locations.map((x, j) => (j === i ? { ...x, city: e.target.value } : x)))}
+                    className={inputClass}
+                    aria-label="City"
+                  />
+                  <input
+                    value={l.label}
+                    placeholder={locationName(l) || "Name"}
+                    onChange={(e) => setLocations(locations.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                    className={inputClass}
+                    aria-label="Name"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocations(locations.filter((_, j) => j !== i));
+                      setUnticked({});
+                    }}
+                    className="rounded-md border border-zinc-300 px-3 text-sm text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setLocations([...locations, { country: "", city: "", label: "" }])}
+                className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                + Add location
+              </button>
+            </div>
+          </Field>
+
+          {validLocations.length > 0 && parsed.length > 0 && (
+            <Field label="Track each prompt in" hint="Every prompt is tracked in every location unless unticked here.">
+              <div className="max-h-96 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Prompt</th>
+                      {validLocations.map((l, i) => (
+                        <th key={i} className="px-3 py-2 text-center font-medium whitespace-nowrap normal-case">
+                          {locationName(l)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                    {parsed.map((p) => {
+                      const key = promptKey(p.text);
+                      const off = unticked[key] ?? [];
+                      return (
+                        <tr key={key}>
+                          <td className="px-3 py-1.5 text-zinc-700 dark:text-zinc-300">{p.text}</td>
+                          {validLocations.map((l, i) => (
+                            <td key={i} className="px-3 py-1.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={!off.includes(i)}
+                                onChange={() =>
+                                  setUnticked({ ...unticked, [key]: off.includes(i) ? off.filter((x) => x !== i) : [...off, i] })
+                                }
+                                aria-label={`${p.text}: ${locationName(l)}`}
+                                className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Field>
+          )}
 
           <div className="grid grid-cols-3 gap-4">
             <Field label="Schedule">

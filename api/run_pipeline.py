@@ -32,6 +32,17 @@ DEFAULT_CATEGORY = "general"
 class PromptInput(BaseModel):
     text: str
     category: str | None = None
+    # The client's locations (LocationInput ids) this prompt is tracked in;
+    # Live Search asks it once per location. Empty: once, with no location.
+    locationIds: list[str] | None = None
+
+
+class LocationInput(BaseModel):
+    id: str
+    label: str  # the place name the engines are told to search for: "Canada"
+    country: str  # ISO 3166-1 alpha-2
+    region: str | None = None
+    city: str | None = None
 
 
 class RunPipelineRequest(BaseModel):
@@ -48,6 +59,9 @@ class RunPipelineRequest(BaseModel):
     aliases: list[str] | None = None
     platforms: list[str] | None = None
     live_search: bool = False
+    # The client's locations, for prompts' locationIds (Live Search only:
+    # Training Search answers from memory, so it ignores locations).
+    locations: list[LocationInput] | None = None
 
 
 def _category_label(category: str) -> str:
@@ -75,7 +89,7 @@ def _build_manual_prompt_groups(prompts: list[PromptInput]) -> tuple[list, list]
         if key in seen:
             continue
         seen.add(key)
-        ordered.append({"category": category, "text": text})
+        ordered.append({"category": category, "text": text, "locationIds": list(p.locationIds or [])})
 
     groups_by_category: dict[str, list[dict]] = {}
     for item in ordered:
@@ -92,12 +106,14 @@ def _build_manual_prompt_groups(prompts: list[PromptInput]) -> tuple[list, list]
                 "position": position,
                 "category": category,
                 "text": item["text"],
+                "locationIds": item["locationIds"],
             })
             group_prompts_out.append({
                 "text": item["text"],
                 "score": None,
                 "reason": "manual",
                 "position": position,
+                "locationIds": item["locationIds"],
             })
         prompt_groups_out.append({
             "category": category,
@@ -181,10 +197,10 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     # slow/rate-limited provider can't starve the others.
     semaphores = {name: asyncio.Semaphore(PER_PROVIDER_CONCURRENCY) for name in selected}
 
-    async def run_one(prompt_entry: dict, platform_key: str, query_fn) -> dict:
+    async def run_one(prompt_entry: dict, platform_key: str, query_fn, location: dict | None) -> dict:
         async with semaphores[platform_key]:
             try:
-                result = await query_fn(prompt_entry["text"])
+                result = await (query_fn(prompt_entry["text"], location) if location else query_fn(prompt_entry["text"]))
             except Exception as e:
                 # Each query function returns its own API errors as a result,
                 # but anything that escapes one (2026-11-12: `import httpx`
@@ -201,6 +217,7 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
             "promptText": prompt_entry["text"],
             "category": prompt_entry["category"],
             "platform": platform_key,
+            "locationId": location["id"] if location else None,
             "modelId": result.platform,
             "responseText": result.response,
             "error": result.error,
@@ -216,9 +233,20 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
             },
         }
 
+    # Live Search asks a prompt once per location it's tracked in (an id not
+    # among the request's locations is skipped); otherwise once, with none.
+    locations_by_id = {loc.id: loc.model_dump() for loc in (payload.locations or [])}
+
+    def where(prompt_entry: dict) -> list[dict | None]:
+        if not payload.live_search:
+            return [None]
+        located = [locations_by_id[i] for i in prompt_entry.get("locationIds") or [] if i in locations_by_id]
+        return located or [None]
+
     tasks = [
-        run_one(prompt_entry, platform_key, query_fn)
+        run_one(prompt_entry, platform_key, query_fn, location)
         for prompt_entry in flat_prompts
+        for location in where(prompt_entry)
         for platform_key, query_fn in selected.items()
     ]
     results = await asyncio.gather(*tasks)
@@ -233,13 +261,18 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     # search answers use) so "Smith & Nephew" can't come back as a
     # different brand name from "Smith & Nephew" -- synced from
     # geo-rank-checker fc1d911. The stored responseText stays as returned.
-    raw_responses_by_platform: dict[str, dict[str, str]] = {name: {} for name in selected}
+    # The same prompt asked in several locations is one answer per location,
+    # so the location is part of the platform key here (it's only a key).
+    def extraction_key(r: dict) -> str:
+        return f'{r["platform"]}@{r["locationId"]}' if r["locationId"] else r["platform"]
+
+    raw_responses_by_platform: dict[str, dict[str, str]] = {}
     for r in results:
-        raw_responses_by_platform[r["platform"]][r["promptText"]] = normalize_text(r["responseText"])
+        raw_responses_by_platform.setdefault(extraction_key(r), {})[r["promptText"]] = normalize_text(r["responseText"])
 
     extracted = await extract_brands(raw_responses_by_platform)
     for r in results:
-        key = (r["platform"], r["promptText"])
+        key = (extraction_key(r), r["promptText"])
         r["parsed"]["extractedBrands"] = extracted.get(key, [])
 
     return {

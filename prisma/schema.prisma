@@ -53,6 +53,34 @@ model Client {
   outreachPlans           OutreachPlan[]
   outreachSites           OutreachSite[]
   login                   User?
+  locations               ClientLocation[]
+
+  // Scheduled runs (schedule above) are Training Search unless this is set:
+  // multi-location clients get monthly Live Searches instead, since only
+  // Live Search can ask as if from a location (user, 2026-11-18).
+  scheduledLiveSearch Boolean @default(false)
+}
+
+// A place a client is tracked in (MacuMira: Canada, Australia, New Zealand).
+// Live Search asks each prompt once per location it's tracked in
+// (Prompt.locationIds), as if searching from there; each answer records its
+// location (RawResponse.locationId). Training Search ignores locations:
+// models answering from memory don't know where the searcher is.
+model ClientLocation {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  label     String   // shown everywhere, and the place name the engines are told to search for: "Canada", "Vancouver, Canada"
+  country   String   // ISO 3166-1 alpha-2, for the engines' location settings: "CA"
+  region    String?  // optional, e.g. "British Columbia"
+  city      String?  // optional, e.g. "Vancouver"
+  position  Int      // display order
+  createdAt DateTime @default(now())
+
+  rawResponses RawResponse[]
+
+  @@unique([clientId, label])
+  @@index([clientId])
 }
 
 // --- Logins (src/lib/auth.ts, src/proxy.ts) ---------------------------------
@@ -392,6 +420,9 @@ model Prompt {
   category    String?
   text        String
   position    Int
+  // The client's locations (ClientLocation ids) this prompt is tracked in.
+  // Empty: asked once with no location, as before locations existed.
+  locationIds String[]  @default([])
 
   rawResponses RawResponse[]
 
@@ -439,12 +470,20 @@ model RawResponse {
   modelId      String?
   responseText String    @db.Text
   createdAt    DateTime  @default(now())
+  // Where the answer was searched from (Live Search with locations); null =
+  // no location, every answer before locations existed.
+  locationId   String?
+  location     ClientLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   parsedResult ParsedResult?
   citations    Citation[]
 
-  @@unique([runId, promptId, platform])
+  // One answer per prompt, platform and location in a run. Postgres treats
+  // NULLs as distinct, so rows with no location rely on the run writing each
+  // (prompt, platform) once, as it always has.
+  @@unique([runId, promptId, platform, locationId])
   @@index([runId])
+  @@index([locationId])
 }
 
 // A page an AI answer cited -- Live Search responses only (Training Search

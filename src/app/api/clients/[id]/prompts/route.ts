@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { getTrackedPromptSet } from "@/lib/tracked-prompts";
+import { getTrackedPromptSet, samePromptList, saveTrackedPrompts } from "@/lib/tracked-prompts";
 import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
 import { requireTeam } from "@/lib/viewer";
 
@@ -17,7 +17,13 @@ export async function PUT(request: Request, ctx: RouteContext<"/api/clients/[id]
   const viewer = await requireTeam();
   if (viewer instanceof Response) return viewer;
   const { id } = await ctx.params;
-  const body = (await request.json().catch(() => ({}))) as { text?: string };
+  // locations: each prompt's location ids, keyed by promptKey(text). A prompt left out keeps
+  // the locations it already had, or (new prompt) gets newPromptLocationIds.
+  const body = (await request.json().catch(() => ({}))) as {
+    text?: string;
+    locations?: Record<string, string[]>;
+    newPromptLocationIds?: string[];
+  };
 
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client) {
@@ -32,9 +38,16 @@ export async function PUT(request: Request, ctx: RouteContext<"/api/clients/[id]
   const current = await getTrackedPromptSet(id);
   const currentPrompts = current?.prompts ?? [];
 
-  const unchanged =
-    currentPrompts.length === prompts.length &&
-    currentPrompts.every((p, i) => p.text === prompts[i].text && p.category === prompts[i].category);
+  // Only this client's own location ids are kept.
+  const own = new Set((await prisma.clientLocation.findMany({ where: { clientId: id }, select: { id: true } })).map((l) => l.id));
+  const before = new Map(currentPrompts.map((p) => [promptKey(p.text), p.locationIds ?? []]));
+  const withLocations = prompts.map((p) => {
+    const key = promptKey(p.text);
+    const ids = body.locations?.[key] ?? before.get(key) ?? body.newPromptLocationIds ?? [];
+    return { ...p, locationIds: [...new Set(ids)].filter((x) => own.has(x)) };
+  });
+
+  const unchanged = samePromptList(currentPrompts, withLocations);
   if (unchanged) {
     return Response.json({ count: prompts.length, added: 0, removed: 0, duplicates, unchanged: true });
   }
@@ -44,15 +57,7 @@ export async function PUT(request: Request, ctx: RouteContext<"/api/clients/[id]
   const added = prompts.filter((p) => !currentKeys.has(promptKey(p.text))).length;
   const removed = currentPrompts.filter((p) => !newKeys.has(promptKey(p.text))).length;
 
-  await prisma.promptSet.create({
-    data: {
-      clientId: id,
-      label: `${client.name} — prompt list edited ${new Date().toISOString()}`,
-      prompts: {
-        create: prompts.map((p, i) => ({ category: p.category, text: p.text, position: i + 1 })),
-      },
-    },
-  });
+  await saveTrackedPrompts(id, `${client.name} — prompt list edited ${new Date().toISOString()}`, withLocations);
 
   return Response.json({ count: prompts.length, added, removed, duplicates, unchanged: false });
 }

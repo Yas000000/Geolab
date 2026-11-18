@@ -11,13 +11,16 @@ export function ClientSettingsForm({
   initialSchedule,
   initialGa4PropertyId,
   initialGscSiteUrl,
+  initialScheduledLiveSearch,
 }: {
   clientId: string;
   initialSchedule: "MANUAL" | "NIGHTLY" | "WEEKLY" | "MONTHLY";
   initialGa4PropertyId: string;
   initialGscSiteUrl: string;
+  initialScheduledLiveSearch: boolean;
 }) {
   const [schedule, setSchedule] = useState(initialSchedule);
+  const [scheduledLiveSearch, setScheduledLiveSearch] = useState(initialScheduledLiveSearch);
   const [ga4PropertyId, setGa4PropertyId] = useState(initialGa4PropertyId);
   const [gscSiteUrl, setGscSiteUrl] = useState(initialGscSiteUrl);
   const [saving, setSaving] = useState(false);
@@ -60,7 +63,7 @@ export function ClientSettingsForm({
       const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schedule, ga4PropertyId: ga4PropertyId || null, gscSiteUrl: gscSiteUrl || null }),
+        body: JSON.stringify({ schedule, scheduledLiveSearch, ga4PropertyId: ga4PropertyId || null, gscSiteUrl: gscSiteUrl || null }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -88,6 +91,17 @@ export function ClientSettingsForm({
             <option value="WEEKLY">Weekly</option>
             <option value="MONTHLY">Monthly</option>
           </select>
+          {/* Live Search is the only kind that asks as if from the client's locations. */}
+          <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={scheduledLiveSearch}
+              onChange={(e) => setScheduledLiveSearch(e.target.checked)}
+              disabled={schedule === "MANUAL"}
+              className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+            />
+            Scheduled runs use Live Search
+          </label>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">GA4 Property ID</label>

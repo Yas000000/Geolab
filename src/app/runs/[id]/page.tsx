@@ -17,6 +17,7 @@ async function getRun(id: string) {
       rawResponses: {
         include: {
           prompt: true,
+          location: true,
           parsedResult: { include: { mentions: { include: { brand: true } } } },
         },
       },
@@ -177,10 +178,16 @@ export default async function RunPage({
     promptGroups.set(p.category ?? "uncategorized", list);
   }
 
+  // A Live Search with locations has an answer per prompt, platform and location:
+  // one grid per location then (in the client's location order), else one grid.
   const cellByPromptPlatform = new Map<string, RawResponseData>();
   for (const r of run.rawResponses) {
-    cellByPromptPlatform.set(`${r.promptId}:${r.platform}`, r);
+    cellByPromptPlatform.set(`${r.promptId}:${r.platform}:${r.locationId ?? ""}`, r);
   }
+  const runLocations = Array.from(
+    new Map(run.rawResponses.map((r) => [r.locationId ?? "", r.location] as const)).entries(),
+  ).sort((a, b) => (a[1]?.position ?? 999) - (b[1]?.position ?? 999));
+  const located = runLocations.some(([id]) => id !== "");
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
@@ -325,9 +332,14 @@ export default async function RunPage({
                 Prompt-by-Prompt Results
               </h2>
               <div className="space-y-6">
-                {Array.from(promptGroups.entries()).map(([category, prompts]) => (
-                  <div key={category}>
+                {runLocations.flatMap(([locationId, location]) => Array.from(promptGroups.entries())
+                  // A location's grid lists the prompts asked there (a prompt can be tracked in only some).
+                  .map(([category, all]) => [category, all.filter((pr) => platforms.some((pl) => cellByPromptPlatform.has(`${pr.id}:${pl}:${locationId}`)))] as const)
+                  .filter(([, prompts]) => prompts.length > 0)
+                  .map(([category, prompts]) => (
+                  <div key={`${locationId}:${category}`}>
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                      {located && <span className="text-zinc-600 dark:text-zinc-300">{location?.label ?? "No location"} · </span>}
                       {CATEGORY_LABEL[category] ?? category}
                     </h3>
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -349,7 +361,7 @@ export default async function RunPage({
                                 {prompt.text}
                               </td>
                               {platforms.map((platform) => {
-                                const cell = cellByPromptPlatform.get(`${prompt.id}:${platform}`);
+                                const cell = cellByPromptPlatform.get(`${prompt.id}:${platform}:${locationId}`);
                                 return (
                                   <td key={platform} className="px-3 py-2 text-center">
                                     <RankBadge rank={cell?.parsedResult?.clientBrandRank} />
@@ -362,7 +374,7 @@ export default async function RunPage({
                       </table>
                     </div>
                   </div>
-                ))}
+                )))}
               </div>
             </section>
           </>

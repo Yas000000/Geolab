@@ -6,7 +6,8 @@ import { ClientSettingsForm } from "@/components/client-settings-form";
 import { RunNowButton } from "@/components/run-now-button";
 import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
-import { formatPromptsText } from "@/lib/parse-prompts";
+import { formatPromptsText, promptKey } from "@/lib/parse-prompts";
+import { ClientLocationsPanel } from "@/components/client-locations-panel";
 import { AnalyticsImportButton } from "@/components/analytics-import-button";
 import { ClientLifecyclePanel } from "@/components/client-lifecycle";
 import { CrawlCheckPanel } from "@/components/crawl-check-panel";
@@ -53,6 +54,8 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       schedule: true,
+      scheduledLiveSearch: true,
+      locations: { orderBy: { position: "asc" }, include: { _count: { select: { rawResponses: true } } } },
       ga4PropertyId: true,
       gscSiteUrl: true,
       archivedAt: true,
@@ -98,10 +101,34 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Locations
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <ClientLocationsPanel
+            clientId={id}
+            locations={client.locations.map((l) => ({
+              id: l.id,
+              label: l.label,
+              country: l.country,
+              region: l.region,
+              city: l.city,
+              answers: l._count.rawResponses,
+            }))}
+          />
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Tracked Prompts
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-          <TrackedPromptsEditor clientId={id} initialText={formatPromptsText(trackedPromptSet?.prompts ?? [])} />
+          <TrackedPromptsEditor
+            clientId={id}
+            initialText={formatPromptsText(trackedPromptSet?.prompts ?? [])}
+            locations={client.locations.map((l) => ({ id: l.id, label: l.label }))}
+            initialLocations={Object.fromEntries((trackedPromptSet?.prompts ?? []).map((p) => [promptKey(p.text), p.locationIds ?? []]))}
+          />
         </div>
       </section>
 
@@ -115,6 +142,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             initialSchedule={client.schedule}
             initialGa4PropertyId={client.ga4PropertyId ?? ""}
             initialGscSiteUrl={client.gscSiteUrl ?? ""}
+            initialScheduledLiveSearch={client.scheduledLiveSearch}
           />
           {analyticsCoverage && (
             <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-900">

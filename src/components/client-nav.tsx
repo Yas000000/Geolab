@@ -17,7 +17,8 @@ const NAV_ITEMS = [
 // Date-range state lives in the URL (see date-range-picker.tsx), scoped per
 // page by Next.js default -- carry it across sidebar nav so picking a range
 // on Rankings and switching to Traffic (or back) doesn't reset to All Time.
-const CARRIED_PARAMS = ["start", "end", "preset", "n", "compare", "compareStart", "compareEnd"];
+// "location": the Location dropdown's choice (clients tracked in several places) carries across tabs too.
+const CARRIED_PARAMS = ["start", "end", "preset", "n", "compare", "compareStart", "compareEnd", "location"];
 
 /** `tabs`: the tab segments a client login may open; null for a team login, which sees them all. */
 export function ClientNav({ clientId, tabs }: { clientId: string; tabs: readonly string[] | null }) {

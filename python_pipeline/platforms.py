@@ -189,14 +189,40 @@ async def query_gemini(prompt: str) -> PlatformResult:
 # from web_search_20260209 to web_search_20250305 on 2026-11-06 for its
 # citations -- see query_claude_live.
 
-async def query_openai_live(prompt: str) -> PlatformResult:
+# --- Location (2026-11-18): Live Search can ask as if from one of a client's
+# locations. Ported from geo-rank-checker's LOCATED_PLATFORMS, each engine's
+# way tested live there: ChatGPT and Perplexity take a location setting on
+# their web_search tool; Claude's setting alone barely moved results (a
+# GB/London test still came back almost all US firms), so Claude is also told
+# to put the place into its own search; Gemini's google_search tool has no
+# location setting at all, so the instruction is all it gets. `location` is
+# {"label": "Canada", "country": "CA", "region": ..., "city": ...}; the label
+# is the place name the engines are told to search for.
+def _located_instructions(instructions: str, location: dict | None) -> str:
+    if not location:
+        return instructions
+    return instructions + (
+        f' The person asking is in {location["label"]}. When you formulate your web search query, explicitly '
+        f'include "{location["label"]}" as a search term so the results are specific to that location, '
+        f"rather than relying on location bias alone."
+    )
+
+
+def _user_location(location: dict | None, with_type: bool) -> dict | None:
+    if not location:
+        return None
+    loc = {k: location[k] for k in ("country", "region", "city") if location.get(k)}
+    return {"type": "approximate", **loc} if with_type else loc
+
+
+async def query_openai_live(prompt: str, location: dict | None = None) -> PlatformResult:
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
         resp = await client.responses.create(
             model="gpt-4o",
             instructions=_LIVE_SEARCH_SYSTEM_PROMPT,
-            tools=[{"type": "web_search"}],
+            tools=[{"type": "web_search", **({"user_location": _user_location(location, True)} if location else {})}],
             input=prompt,
         )
         # Cited pages are url_citation annotations on the message's text
@@ -226,7 +252,7 @@ async def query_openai_live(prompt: str) -> PlatformResult:
         return PlatformResult("ChatGPT (GPT-4o, live search)", "", error=str(e))
 
 
-async def query_claude_live(prompt: str) -> PlatformResult:
+async def query_claude_live(prompt: str, location: dict | None = None) -> PlatformResult:
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -236,14 +262,17 @@ async def query_claude_live(prompt: str) -> PlatformResult:
             # answer took ~1,400 output tokens in a live test (2026-11-06,
             # stop_reason "max_tokens" at 1024, "end_turn" at 4096).
             max_tokens=4096,
-            system=_LIVE_SEARCH_SYSTEM_PROMPT,
+            system=_located_instructions(_LIVE_SEARCH_SYSTEM_PROMPT, location),
             messages=[{"role": "user", "content": prompt}],
             # web_search_20250305, not the newer web_search_20260209: tested
             # live side by side 2026-11-06 on the same prompt -- 20260209
             # (search results filtered through code execution) returned text
             # blocks with no citations at all, 20250305 returned 15 real
             # per-claim citations. Citations are what the Citations page reports.
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tools=[{
+                "type": "web_search_20250305", "name": "web_search",
+                **({"user_location": _user_location(location, True)} if location else {}),
+            }],
         )
         # Claude splits its answer into text blocks and attaches citations to
         # the block holding the cited claim, so each citation's span is its
@@ -266,7 +295,7 @@ async def query_claude_live(prompt: str) -> PlatformResult:
         return PlatformResult("Claude (Sonnet 4.6, live search)", "", error=str(e))
 
 
-async def query_gemini_live(prompt: str) -> PlatformResult:
+async def query_gemini_live(prompt: str, location: dict | None = None) -> PlatformResult:
     from google.genai import types
     client = _gemini_client()
     last_err = ""
@@ -276,7 +305,7 @@ async def query_gemini_live(prompt: str) -> PlatformResult:
                 model="gemini-flash-lite-latest",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=_LIVE_SEARCH_SYSTEM_PROMPT,
+                    system_instruction=_located_instructions(_LIVE_SEARCH_SYSTEM_PROMPT, location),
                     tools=[types.Tool(google_search=types.GoogleSearch())],
                 ),
             )
@@ -403,14 +432,14 @@ async def _pplx_wait_turn() -> None:
         await asyncio.sleep(start - now)
 
 
-async def query_perplexity_live(prompt: str) -> PlatformResult:
+async def query_perplexity_live(prompt: str, location: dict | None = None) -> PlatformResult:
     import httpx
 
     body = {
         "model": "perplexity/sonar",
-        "instructions": _LIVE_SEARCH_SYSTEM_PROMPT,
+        "instructions": _located_instructions(_LIVE_SEARCH_SYSTEM_PROMPT, location),
         "input": prompt,
-        "tools": [{"type": "web_search"}],
+        "tools": [{"type": "web_search", **({"user_location": _user_location(location, False)} if location else {})}],
         "max_output_tokens": 4096,
     }
     headers = {"Authorization": f"Bearer {os.environ['PERPLEXITY_API_KEY']}"}

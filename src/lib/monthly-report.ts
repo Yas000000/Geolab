@@ -66,7 +66,7 @@ export interface EngineRank {
 /** One brand's figures, as the GEO Rankings tab's Competitors table computes them. */
 export interface CompetitorFigures {
   position: number | null; // average list position when mentioned
-  visibilityPct: number | null; // mentions / answers
+  visibilityPct: number | null; // answers naming it / answers (competitor-table.ts)
   sharePct: number | null; // mentions / all brands' mentions
 }
 

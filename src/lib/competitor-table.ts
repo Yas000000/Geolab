@@ -2,7 +2,11 @@
 // the two always show the same numbers for the same answers:
 //   Rank           by mentions, most first
 //   Position       average list position when mentioned
-//   Visibility     mentions / answers
+//   Visibility     answers that mention it / answers (each answer once, 2026-11-18:
+//                  counting mentions let an answer naming a brand twice, e.g. under
+//                  two of its names, push visibility past 100% on few answers). Every
+//                  brand, the client included, counts answers that NAME it; the
+//                  headline Visibility Score also counts answers citing the client's site.
 //   Share of Voice mentions / all brands' mentions
 
 export interface MentionLike {
@@ -26,12 +30,18 @@ export interface CompetitorStat {
 }
 
 export function competitorStats(answers: AnswerLike[]): CompetitorStat[] {
-  const acc = new Map<string, { name: string; isClientBrand: boolean; appearances: number; positions: number[] }>();
+  const acc = new Map<string, { name: string; isClientBrand: boolean; appearances: number; answers: number; positions: number[] }>();
   for (const r of answers) {
+    const seen = new Set<string>();
     for (const m of r.parsedResult?.mentions ?? []) {
       const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
-      const e = acc.get(key) ?? { name: m.brand?.name ?? m.rawLabel, isClientBrand: m.brand?.isClientBrand ?? false, appearances: 0, positions: [] };
+      const e =
+        acc.get(key) ?? { name: m.brand?.name ?? m.rawLabel, isClientBrand: m.brand?.isClientBrand ?? false, appearances: 0, answers: 0, positions: [] };
       e.appearances += 1;
+      if (!seen.has(key)) {
+        e.answers += 1;
+        seen.add(key);
+      }
       if (m.position != null) e.positions.push(m.position);
       acc.set(key, e);
     }
@@ -44,7 +54,7 @@ export function competitorStats(answers: AnswerLike[]): CompetitorStat[] {
       isClientBrand: e.isClientBrand,
       appearances: e.appearances,
       avgPosition: e.positions.length ? e.positions.reduce((a, c) => a + c, 0) / e.positions.length : null,
-      visibilityPct: answers.length ? (e.appearances / answers.length) * 100 : 0,
+      visibilityPct: answers.length ? (e.answers / answers.length) * 100 : 0,
       sharePct: totalAppearances ? (e.appearances / totalAppearances) * 100 : 0,
     }))
     .sort((a, b) => b.appearances - a.appearances);

@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunStatus, RunSchedule } from "@/generated/prisma/client";
 import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@/lib/run-persistence";
-import { parsePromptsText } from "@/lib/parse-prompts";
+import { parsePromptsText, promptKey } from "@/lib/parse-prompts";
+import { cleanLocation, pipelineLocations, type LocationInput } from "@/lib/client-locations";
 import { requireTeam } from "@/lib/viewer";
 
 export const runtime = "nodejs";
@@ -18,6 +19,10 @@ interface NewClientRequestBody {
   ga4PropertyId?: string;
   gscSiteUrl?: string;
   platforms?: string[];
+  // Places the client is tracked in, and which of them (indexes into locations)
+  // each prompt is tracked in, keyed by promptKey(text). A prompt left out: all of them.
+  locations?: LocationInput[];
+  promptLocations?: Record<string, number[]>;
 }
 
 function pipelineUrl(request: Request): string {
@@ -35,6 +40,13 @@ export async function POST(request: Request): Promise<Response> {
   if (parsedPrompts.length === 0) {
     return Response.json({ error: "No prompts found in the pasted text." }, { status: 400 });
   }
+  const cleaned = (body.locations ?? []).map(cleanLocation);
+  const bad = cleaned.find((l) => typeof l === "string");
+  if (bad) return Response.json({ error: bad }, { status: 400 });
+  const locations = cleaned as Exclude<(typeof cleaned)[number], string>[];
+  if (new Set(locations.map((l) => l.label.toLowerCase())).size !== locations.length) {
+    return Response.json({ error: "Two locations have the same name." }, { status: 400 });
+  }
 
   const client = await findOrCreateClient(brandName, domain, {
     schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
@@ -42,6 +54,16 @@ export async function POST(request: Request): Promise<Response> {
     gscSiteUrl: body.gscSiteUrl,
   });
   const brand = await findOrCreateBrand(client.id, brandName, true);
+  // Locations: created once (adding an existing client again keeps the ones it has).
+  const locationIds: string[] = [];
+  for (const [i, l] of locations.entries()) {
+    const row =
+      (await prisma.clientLocation.findFirst({ where: { clientId: client.id, label: { equals: l.label, mode: "insensitive" } } })) ??
+      (await prisma.clientLocation.create({ data: { clientId: client.id, ...l, position: i + 1 } }));
+    locationIds.push(row.id);
+  }
+  const promptLocationIds = (text: string) =>
+    (body.promptLocations?.[promptKey(text)] ?? locations.map((_, i) => i)).map((i) => locationIds[i]).filter(Boolean);
   // Import GA4/Search Console history once the response is sent, so the
   // Traffic page has real history from day one (see /api/clients/[id] PATCH).
   if (client.ga4PropertyId || client.gscSiteUrl) after(importHistoryForClient(client.id));
@@ -74,7 +96,10 @@ export async function POST(request: Request): Promise<Response> {
     pipelineBody: {
       domain,
       brand: brandName,
-      prompts: parsedPrompts.map((p) => ({ text: p.text, category: p.category })),
+      // The first check is Training Search, which ignores locations; the prompt list keeps
+      // them for Live Search (Run Now's Live Search or scheduled runs).
+      prompts: parsedPrompts.map((p) => ({ text: p.text, category: p.category, locationIds: promptLocationIds(p.text) })),
+      locations: await pipelineLocations(client.id),
       platforms: body.platforms,
     },
   });

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { competitorStats } from "@/lib/competitor-table";
 import { ModelFilter } from "@/components/model-filter";
+import { LocationFilter } from "@/components/location-filter";
 import { DateRangePicker } from "@/components/date-range-picker";
 import { VisibilityTrendChart, type TrendPoint } from "@/components/visibility-trend-chart";
 import {
@@ -26,6 +27,7 @@ async function getClient(id: string) {
       id: true,
       name: true,
       domain: true,
+      locations: { orderBy: { position: "asc" } },
       runs: {
         orderBy: { startedAt: "asc" },
         include: {
@@ -515,18 +517,22 @@ function buildDashboardData(
   const clientRow = brandTable.find((b) => b.isClientBrand);
   if (clientRow && !rankKeys.includes(clientRow.key)) rankKeys.push(clientRow.key);
   // Position / Visibility / Share of Voice per crawl use the table's own
-  // formulas (avg list position; mentions / answers; mentions / all brands'
+  // formulas (avg list position; answers naming it / answers; mentions / all brands'
   // mentions), scoped to that crawl.
   const rankCrawls: RankCrawl[] = [];
   const rankPoints = new Map<string, BrandCrawlPoint[]>(rankKeys.map((k) => [k, []]));
   for (const run of primaryRuns) {
     const matching = run.rawResponses.filter(matchesPlatform);
     const counts = new Map<string, number>();
+    const answersWith = new Map<string, number>(); // answers naming the brand (each answer once), for visibility
     const positions = new Map<string, number[]>();
     for (const r of matching) {
+      const seen = new Set<string>();
       for (const m of r.parsedResult?.mentions ?? []) {
         const key = m.brand?.id ?? `raw:${m.rawLabel.toLowerCase()}`;
         counts.set(key, (counts.get(key) ?? 0) + 1);
+        if (!seen.has(key)) answersWith.set(key, (answersWith.get(key) ?? 0) + 1);
+        seen.add(key);
         if (m.position != null) positions.set(key, [...(positions.get(key) ?? []), m.position]);
       }
     }
@@ -545,7 +551,7 @@ function buildDashboardData(
         mentions: n,
         rank: n ? sortedCounts.indexOf(n) + 1 : null,
         avgPosition: pos.length ? pos.reduce((a, c) => a + c, 0) / pos.length : null,
-        visibilityPct: (n / matching.length) * 100,
+        visibilityPct: ((answersWith.get(key) ?? 0) / matching.length) * 100,
         sovPct: (n / totalMentions) * 100,
       });
     }
@@ -611,6 +617,26 @@ function buildDashboardData(
   };
 }
 
+// --- Locations (2026-11-18) -------------------------------------------------
+// A client tracked in several places (MacuMira: Canada, Australia, New Zealand)
+// gets a Location dropdown. "All locations" (the default) shows each location
+// side by side, never blended into one figure; picking one shows this page for
+// that location alone. Answers searched with no location (everything before
+// locations existed) are their own "No location" entry.
+
+/** The client with only one location's answers ("" = answers with no location). */
+function forLocation(client: ClientData, locationId: string): ClientData {
+  return {
+    ...client,
+    runs: client.runs.map((run) => ({
+      ...run,
+      rawResponses: run.rawResponses.filter((r) => (r.locationId ?? "") === locationId),
+    })),
+  };
+}
+
+type DashboardData = ReturnType<typeof buildDashboardData>;
+
 export default async function ClientRankingsPage({
   params,
   searchParams,
@@ -623,6 +649,7 @@ export default async function ClientRankingsPage({
   const sp = await searchParams;
   const model = sp.model;
   const platformFilter = typeof model === "string" && model ? model : undefined;
+  const locationParam = typeof sp.location === "string" ? sp.location : "";
 
   const startParam = typeof sp.start === "string" ? sp.start : undefined;
   const endParam = typeof sp.end === "string" ? sp.end : undefined;
@@ -641,77 +668,116 @@ export default async function ClientRankingsPage({
   const client = await getClient(id);
   if (!client) notFound();
 
-  const {
-    platformsAvailable,
-    trendPoints,
-    headlineVisibility,
-    comparisonHeadlineVisibility,
-    hasComparison,
-    totalResponses,
-    brandTable,
-    promptRankings,
-    promptChangeMode,
-    crawlSpan,
-    changeStart,
-    rankCrawls,
-    rankSeries,
-    benchmarksInRange,
-    allTimeRange,
-  } = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
+  // The dropdown's entries: the client's locations, plus "No location" when it has
+  // answers searched with none. URL value: the location's id, or "none".
+  const hasUnlocated = client.runs.some((run) => run.status === "COMPLETE" && run.rawResponses.some((r) => !r.locationId));
+  const locations = client.locations.length
+    ? [
+        ...client.locations.map((l) => ({ id: l.id, key: l.id, label: l.label })),
+        ...(hasUnlocated ? [{ id: "", key: "none", label: "No location" }] : []),
+      ]
+    : [];
+  const selected = locations.find((l) => l.key === locationParam) ?? null;
 
-  const scoreDelta =
-    hasComparison && comparisonHeadlineVisibility != null ? headlineVisibility - comparisonHeadlineVisibility : null;
+  const whole = buildDashboardData(client, platformFilter, dateRange, comparisonRange);
+  const header = (
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">{client.name}</h1>
+        {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
+      </div>
+      <div className="flex flex-wrap items-start gap-2">
+        {locations.length > 0 && <LocationFilter locations={locations.map((l) => ({ key: l.key, label: l.label }))} />}
+        <ModelFilter platforms={whole.platformsAvailable.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p }))} />
+        <DateRangePicker allTimeRange={whole.allTimeRange} />
+      </div>
+    </header>
+  );
 
-  const promptGroups = new Map<string, PromptRankRow[]>();
-  for (const p of promptRankings) {
-    const list = promptGroups.get(p.category ?? "uncategorized") ?? [];
-    list.push(p);
-    promptGroups.set(p.category ?? "uncategorized", list);
+  // All locations: each one side by side.
+  if (locations.length > 0 && !selected) {
+    const views = locations.map((l) => ({
+      ...l,
+      data: buildDashboardData(forLocation(client, l.id), platformFilter, dateRange, comparisonRange),
+    }));
+    return (
+      <div>
+        {header}
+
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Visibility by Location
+          </h2>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+            {views.map((v) => (
+              <div key={v.key} className="min-w-0">
+                <VisibilityCard title={v.label} data={v.data} platformFilter={platformFilter} />
+                <VisibilityTrendChart points={v.data.trendPoints} />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Prompt Rankings
+          </h2>
+          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            Each location&apos;s answers, searched as if from there. {COMMON_NOTE} Pick a location above to see one on its own.
+          </p>
+          <div className="space-y-8">
+            {views.map((v) => (
+              <div key={v.key}>
+                <h3 className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</h3>
+                <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{changeNote(v.data)}</p>
+                <PromptRankingTables data={v.data} />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Competitors by Location
+          </h2>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+            {views.map((v) => (
+              <div key={v.key} className="min-w-0">
+                <h3 className="mb-2 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</h3>
+                <CompetitorTable data={v.data} platformFilter={platformFilter} limit={10} compact />
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            Top 10 per location. Pick a location above for its full list and each competitor&apos;s rank crawl by crawl.
+            Competitors are detected automatically from run results; manage the tracked list in{" "}
+            <a href={`/clients/${id}/competitors`} className="underline">
+              Competitors
+            </a>
+            .
+          </p>
+        </section>
+
+        <BenchmarkBaseline benchmarks={whole.benchmarksInRange} />
+      </div>
+    );
   }
 
+  // One location (or a client with no locations): the full page.
+  const data = selected ? buildDashboardData(forLocation(client, selected.id), platformFilter, dateRange, comparisonRange) : whole;
   return (
     <div>
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">{client.name}</h1>
-          {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
-        </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <ModelFilter platforms={platformsAvailable.map((p) => ({ key: p, label: PLATFORM_LABEL[p] ?? p }))} />
-          <DateRangePicker allTimeRange={allTimeRange} />
-        </div>
-      </header>
+      {header}
+      {selected && (
+        <p className="-mt-3 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Showing <span className="font-medium text-zinc-900 dark:text-zinc-100">{selected.label}</span> only
+          {selected.id ? ": answers searched as if from there." : ": answers searched with no location set."}
+        </p>
+      )}
 
       <section className="mb-8">
-        <div className="mb-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Visibility Score
-          </div>
-          <div className="mt-1 flex items-baseline gap-3">
-            <div className="text-3xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-              {headlineVisibility.toFixed(1)}%
-            </div>
-            {scoreDelta != null && (
-              <span
-                className={`text-sm font-medium tabular-nums ${
-                  scoreDelta > 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : scoreDelta < 0
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-zinc-400 dark:text-zinc-600"
-                }`}
-              >
-                {scoreDelta > 0 ? "▲" : scoreDelta < 0 ? "▼" : "–"} {Math.abs(scoreDelta).toFixed(1)}pp vs.{" "}
-                {comparisonHeadlineVisibility!.toFixed(1)}%
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            across {totalResponses} check{totalResponses === 1 ? "" : "s"}
-            {platformFilter ? ` · ${PLATFORM_LABEL[platformFilter] ?? platformFilter} only` : ""}
-          </div>
-        </div>
-        <VisibilityTrendChart points={trendPoints} />
+        <VisibilityCard data={data} platformFilter={platformFilter} />
+        <VisibilityTrendChart points={data.trendPoints} />
       </section>
 
       <section className="mb-8">
@@ -719,203 +785,19 @@ export default async function ClientRankingsPage({
           Prompt Rankings
         </h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-          Shown per platform regardless of the Models filter above. An answer that cites your site without naming you
-          counts as #1, the same as a mention outside the AI&apos;s list.
-          {promptChangeMode === "period"
-            ? " Change is vs. the comparison period selected in the date picker."
-            : promptChangeMode === "periodEmpty"
-              ? " No crawls fall in the selected Compare To period, so Change is blank."
-              : changeStart
-                ? ` Change is each prompt's most recent crawl (${changeStart.latest}) vs. the ${changeStart.label}, platform by platform, for ${andList(changeStart.platforms)}${changeStart.uncovered.length ? `; ${andList(changeStart.uncovered)} ${changeStart.uncovered.length === 1 ? "wasn't" : "weren't"} part of the benchmark, so ${changeStart.uncovered.length === 1 ? "its" : "their"} Change starts at ${changeStart.uncovered.length === 1 ? "its" : "their"} first crawl` : ""}. An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`
-              : crawlSpan
-                ? ` Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`
-                : " Change needs at least two crawls in this range. Pick a \"Compare To\" period in the date picker to compare periods instead."}
+          {COMMON_NOTE} {changeNote(data)}
         </p>
-        {promptRankings.length === 0 ? (
-          <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            No completed runs in this range.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {Array.from(promptGroups.entries()).map(([category, prompts]) => (
-              <div key={category}>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                  {CATEGORY_LABEL[category] ?? category}
-                </h3>
-                <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                  <table className="w-full text-sm">
-                    <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                      <tr>
-                        {/* Prompt column stays pinned while the platform columns scroll sideways (phones). */}
-                        <th rowSpan={2} className={`${PROMPT_COL} bg-zinc-100 px-4 py-2 align-bottom font-medium dark:bg-zinc-900`}>
-                          Prompt
-                        </th>
-                        {platformsAvailable.map((platform) => (
-                          <th key={platform} colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
-                            {PLATFORM_LABEL[platform] ?? platform}
-                          </th>
-                        ))}
-                        <th colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
-                          Visibility
-                        </th>
-                        <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
-                          Top-3 Rate
-                        </th>
-                        <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
-                          Share of Voice
-                        </th>
-                      </tr>
-                      <tr>
-                        {platformsAvailable.map((platform) => (
-                          <Fragment key={platform}>
-                            <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
-                              Rank
-                            </th>
-                            <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
-                          </Fragment>
-                        ))}
-                        <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
-                          %
-                        </th>
-                        <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                      {prompts.map((p) => (
-                        <tr key={p.key} className="bg-white dark:bg-zinc-950">
-                          <td className={`${PROMPT_COL} bg-white px-4 py-2 text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300`}>{p.text}</td>
-                          {platformsAvailable.map((platform) => {
-                            const cell = p.platforms[platform];
-                            return (
-                              <Fragment key={platform}>
-                                <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
-                                  {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
-                                </td>
-                                <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={cell?.changeTitle ?? undefined}>
-                                  {cell?.movement == null ? (
-                                    <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                                  ) : (
-                                    <span
-                                      className={
-                                        cell.movement > 0
-                                          ? "text-emerald-600 dark:text-emerald-400"
-                                          : cell.movement < 0
-                                            ? "text-red-600 dark:text-red-400"
-                                            : "text-zinc-400 dark:text-zinc-600"
-                                      }
-                                    >
-                                      {cell.movement > 0 ? "+" : cell.movement < 0 ? "-" : "–"}
-                                      {cell.movement !== 0 ? Math.abs(cell.movement).toFixed(1) : ""}
-                                    </span>
-                                  )}
-                                </td>
-                              </Fragment>
-                            );
-                          })}
-                          <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
-                            {p.visibilityPct.toFixed(0)}%
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={p.visibilityChangeTitle ?? undefined}>
-                            {p.visibilityChange == null ? (
-                              <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                            ) : (
-                              <span
-                                className={
-                                  p.visibilityChange > 0
-                                    ? "text-emerald-600 dark:text-emerald-400"
-                                    : p.visibilityChange < 0
-                                      ? "text-red-600 dark:text-red-400"
-                                      : "text-zinc-400 dark:text-zinc-600"
-                                }
-                              >
-                                {p.visibilityChange > 0 ? "+" : p.visibilityChange < 0 ? "-" : "–"}
-                                {p.visibilityChange !== 0 ? Math.abs(p.visibilityChange).toFixed(0) + "pp" : ""}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
-                          <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
-                            {p.shareOfVoicePct != null ? `${p.shareOfVoicePct.toFixed(0)}%` : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <PromptRankingTables data={data} />
       </section>
 
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Competitors
         </h2>
-        {brandTable.length > 0 && rankCrawls.length > 0 && (
-          <CompetitorRankChart crawls={rankCrawls} series={rankSeries} brandCount={RANK_CHART_BRANDS} />
+        {data.brandTable.length > 0 && data.rankCrawls.length > 0 && (
+          <CompetitorRankChart crawls={data.rankCrawls} series={data.rankSeries} brandCount={RANK_CHART_BRANDS} />
         )}
-        {brandTable.length === 0 ? (
-          <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            No completed runs in this range{platformFilter ? " for this platform" : ""}.
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full text-sm">
-              <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Rank</th>
-                  <th className="px-4 py-2 font-medium">Brand</th>
-                  <th className="px-4 py-2 font-medium tabular-nums">Position</th>
-                  <th className="px-4 py-2 font-medium tabular-nums">Visibility</th>
-                  <th className="px-4 py-2 font-medium tabular-nums">Share of Voice</th>
-                  {hasComparison && <th className="px-4 py-2 font-medium tabular-nums">Change</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                {brandTable.slice(0, 15).map((b, i) => {
-                  const totalAppearances = brandTable.reduce((a, c) => a + c.appearances, 0);
-                  const sov = totalAppearances ? (b.appearances / totalAppearances) * 100 : 0;
-                  return (
-                    <tr key={b.key} className={b.isClientBrand ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
-                      <td className="px-4 py-3 tabular-nums text-zinc-500 dark:text-zinc-400">#{i + 1}</td>
-                      <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">
-                        {b.name}
-                        {b.isClientBrand && (
-                          <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                            You
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums">{b.avgPosition != null ? b.avgPosition.toFixed(1) : "—"}</td>
-                      <td className="px-4 py-3 tabular-nums">{b.visibilityPct.toFixed(1)}%</td>
-                      <td className="px-4 py-3 tabular-nums">{sov.toFixed(1)}%</td>
-                      {hasComparison && (
-                        <td className="px-4 py-3 tabular-nums">
-                          {b.delta == null ? (
-                            <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                          ) : (
-                            <span
-                              className={
-                                b.delta > 0
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : b.delta < 0
-                                    ? "text-red-600 dark:text-red-400"
-                                    : "text-zinc-400 dark:text-zinc-600"
-                              }
-                            >
-                              {b.delta > 0 ? "▲" : b.delta < 0 ? "▼" : "–"} {Math.abs(b.delta).toFixed(1)}pp
-                            </span>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <CompetitorTable data={data} platformFilter={platformFilter} limit={15} />
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
           Competitors are detected automatically from run results. Manage the tracked list in{" "}
           <a href={`/clients/${id}/competitors`} className="underline">
@@ -925,76 +807,342 @@ export default async function ClientRankingsPage({
         </p>
       </section>
 
-      {benchmarksInRange.length > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Benchmark Competitor Baseline
-          </h2>
-          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-            Competitor standing as of the baseline date (shown on the Visibility chart above).
-          </p>
-          <div className="space-y-6">
-            {benchmarksInRange.map((snap) => (
-              <div
-                key={snap.id}
-                className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/40"
-              >
-                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                  <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {snap.source} baseline — {snap.snapshotDate.toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                      timeZone: "UTC", // snapshotDate is stored as a UTC-midnight date-only value; without
-                      // pinning the display timezone, a browser/server behind UTC renders the day before.
-                    })}
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-                    {snap.ownVisibilityPct != null && <span>Visibility: {snap.ownVisibilityPct}%</span>}
-                    {snap.ownPosition != null && <span>Position: {snap.ownPosition}</span>}
-                    {snap.ownSentiment != null && <span>Sentiment: {snap.ownSentiment}/100</span>}
-                  </div>
-                </div>
-
-                {snap.competitors.length > 0 && (
-                  <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-sm">
-                      <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                        <tr>
-                          <th className="px-3 py-1.5 font-medium">Brand</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Visibility</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Sentiment</th>
-                          <th className="px-3 py-1.5 font-medium tabular-nums">Share of Voice</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                        {snap.competitors.map((c) => (
-                          <tr key={c.id} className="bg-white dark:bg-zinc-950">
-                            <td className="px-3 py-1.5 font-medium text-zinc-900 dark:text-zinc-100">{c.name}</td>
-                            <td className="px-3 py-1.5 tabular-nums">{c.position ?? "—"}</td>
-                            <td className="px-3 py-1.5 tabular-nums">
-                              {c.visibilityPct != null ? `${c.visibilityPct}%` : "—"}
-                            </td>
-                            <td className="px-3 py-1.5 tabular-nums">{c.sentiment ?? "—"}</td>
-                            <td className="px-3 py-1.5 tabular-nums">
-                              {c.shareOfVoicePct != null ? `${c.shareOfVoicePct}%` : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {snap.sourceNote && (
-                  <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">{snap.sourceNote}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <BenchmarkBaseline benchmarks={data.benchmarksInRange} />
     </div>
+  );
+}
+
+const COMMON_NOTE =
+  "Shown per platform regardless of the Models filter above. An answer that cites your site without naming you counts as #1, the same as a mention outside the AI's list.";
+
+/** What the Prompt Rankings Change columns compare, for this view's data. */
+function changeNote(data: DashboardData): string {
+  const { promptChangeMode, changeStart, crawlSpan } = data;
+  if (promptChangeMode === "period") return "Change is vs. the comparison period selected in the date picker.";
+  if (promptChangeMode === "periodEmpty") return "No crawls fall in the selected Compare To period, so Change is blank.";
+  if (changeStart) {
+    const uncovered = changeStart.uncovered;
+    return `Change is each prompt's most recent crawl (${changeStart.latest}) vs. the ${changeStart.label}, platform by platform, for ${andList(changeStart.platforms)}${uncovered.length ? `; ${andList(uncovered)} ${uncovered.length === 1 ? "wasn't" : "weren't"} part of the benchmark, so ${uncovered.length === 1 ? "its" : "their"} Change starts at ${uncovered.length === 1 ? "its" : "their"} first crawl` : ""}. An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`;
+  }
+  if (crawlSpan) {
+    return `Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`;
+  }
+  return 'Change needs at least two crawls in this range. Pick a "Compare To" period in the date picker to compare periods instead.';
+}
+
+/** The Visibility Score card (with a location's name above it in the All locations view). */
+function VisibilityCard({ data, platformFilter, title }: { data: DashboardData; platformFilter: string | undefined; title?: string }) {
+  const { headlineVisibility, comparisonHeadlineVisibility, hasComparison, totalResponses } = data;
+  const scoreDelta =
+    hasComparison && comparisonHeadlineVisibility != null ? headlineVisibility - comparisonHeadlineVisibility : null;
+  return (
+    <div className="mb-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+      {title && <div className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{title}</div>}
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Visibility Score</div>
+      <div className="mt-1 flex items-baseline gap-3">
+        <div className="text-3xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">{headlineVisibility.toFixed(1)}%</div>
+        {scoreDelta != null && (
+          <span
+            className={`text-sm font-medium tabular-nums ${
+              scoreDelta > 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : scoreDelta < 0
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-zinc-400 dark:text-zinc-600"
+            }`}
+          >
+            {scoreDelta > 0 ? "▲" : scoreDelta < 0 ? "▼" : "–"} {Math.abs(scoreDelta).toFixed(1)}pp vs.{" "}
+            {comparisonHeadlineVisibility!.toFixed(1)}%
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+        across {totalResponses} check{totalResponses === 1 ? "" : "s"}
+        {platformFilter ? ` · ${PLATFORM_LABEL[platformFilter] ?? platformFilter} only` : ""}
+      </div>
+    </div>
+  );
+}
+
+/** Prompt Rankings: a table per category, each platform with its own Rank and Change. */
+function PromptRankingTables({ data }: { data: DashboardData }) {
+  const { promptRankings, platformsAvailable } = data;
+  if (promptRankings.length === 0) {
+    return (
+      <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+        No completed runs in this range.
+      </div>
+    );
+  }
+  const promptGroups = new Map<string, PromptRankRow[]>();
+  for (const p of promptRankings) {
+    const list = promptGroups.get(p.category ?? "uncategorized") ?? [];
+    list.push(p);
+    promptGroups.set(p.category ?? "uncategorized", list);
+  }
+  return (
+    <div className="space-y-6">
+      {Array.from(promptGroups.entries()).map(([category, prompts]) => (
+        <div key={category}>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            {CATEGORY_LABEL[category] ?? category}
+          </h3>
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                <tr>
+                  {/* Prompt column stays pinned while the platform columns scroll sideways (phones). */}
+                  <th rowSpan={2} className={`${PROMPT_COL} bg-zinc-100 px-4 py-2 align-bottom font-medium dark:bg-zinc-900`}>
+                    Prompt
+                  </th>
+                  {platformsAvailable.map((platform) => (
+                    <th
+                      key={platform}
+                      colSpan={2}
+                      className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800"
+                    >
+                      {PLATFORM_LABEL[platform] ?? platform}
+                    </th>
+                  ))}
+                  <th colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
+                    Visibility
+                  </th>
+                  <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
+                    Top-3 Rate
+                  </th>
+                  <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
+                    Share of Voice
+                  </th>
+                </tr>
+                <tr>
+                  {platformsAvailable.map((platform) => (
+                    <Fragment key={platform}>
+                      <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                        Rank
+                      </th>
+                      <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
+                    </Fragment>
+                  ))}
+                  <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                    %
+                  </th>
+                  <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                {prompts.map((p) => (
+                  <tr key={p.key} className="bg-white dark:bg-zinc-950">
+                    <td className={`${PROMPT_COL} bg-white px-4 py-2 text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300`}>{p.text}</td>
+                    {platformsAvailable.map((platform) => {
+                      const cell = p.platforms[platform];
+                      return (
+                        <Fragment key={platform}>
+                          <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
+                            {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={cell?.changeTitle ?? undefined}>
+                            {cell?.movement == null ? (
+                              <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                            ) : (
+                              <span
+                                className={
+                                  cell.movement > 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : cell.movement < 0
+                                      ? "text-red-600 dark:text-red-400"
+                                      : "text-zinc-400 dark:text-zinc-600"
+                                }
+                              >
+                                {cell.movement > 0 ? "+" : cell.movement < 0 ? "-" : "–"}
+                                {cell.movement !== 0 ? Math.abs(cell.movement).toFixed(1) : ""}
+                              </span>
+                            )}
+                          </td>
+                        </Fragment>
+                      );
+                    })}
+                    <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
+                      {p.visibilityPct.toFixed(0)}%
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={p.visibilityChangeTitle ?? undefined}>
+                      {p.visibilityChange == null ? (
+                        <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                      ) : (
+                        <span
+                          className={
+                            p.visibilityChange > 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : p.visibilityChange < 0
+                                ? "text-red-600 dark:text-red-400"
+                                : "text-zinc-400 dark:text-zinc-600"
+                          }
+                        >
+                          {p.visibilityChange > 0 ? "+" : p.visibilityChange < 0 ? "-" : "–"}
+                          {p.visibilityChange !== 0 ? Math.abs(p.visibilityChange).toFixed(0) + "pp" : ""}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
+                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
+                      {p.shareOfVoicePct != null ? `${p.shareOfVoicePct.toFixed(0)}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The Competitors table (compact: narrower cells, for a location's column in the All locations view). */
+function CompetitorTable({
+  data,
+  platformFilter,
+  limit,
+  compact = false,
+}: {
+  data: DashboardData;
+  platformFilter: string | undefined;
+  limit: number;
+  compact?: boolean;
+}) {
+  const { brandTable, hasComparison } = data;
+  if (brandTable.length === 0) {
+    return (
+      <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+        No completed runs in this range{platformFilter ? " for this platform" : ""}.
+      </div>
+    );
+  }
+  const cell = compact ? "px-2 py-2" : "px-4 py-3";
+  const head = compact ? "px-2 py-2" : "px-4 py-2";
+  const totalAppearances = brandTable.reduce((a, c) => a + c.appearances, 0);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full text-sm">
+        <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+          <tr>
+            <th className={`${head} font-medium`}>Rank</th>
+            <th className={`${head} font-medium`}>Brand</th>
+            <th className={`${head} font-medium tabular-nums`}>Position</th>
+            <th className={`${head} font-medium tabular-nums`}>Visibility</th>
+            <th className={`${head} font-medium tabular-nums`}>Share of Voice</th>
+            {hasComparison && <th className={`${head} font-medium tabular-nums`}>Change</th>}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+          {brandTable.slice(0, limit).map((b, i) => {
+            const sov = totalAppearances ? (b.appearances / totalAppearances) * 100 : 0;
+            return (
+              <tr key={b.key} className={b.isClientBrand ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
+                <td className={`${cell} tabular-nums text-zinc-500 dark:text-zinc-400`}>#{i + 1}</td>
+                <td className={`${cell} font-medium text-zinc-900 dark:text-zinc-100`}>
+                  {b.name}
+                  {b.isClientBrand && (
+                    <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      You
+                    </span>
+                  )}
+                </td>
+                <td className={`${cell} tabular-nums`}>{b.avgPosition != null ? b.avgPosition.toFixed(1) : "—"}</td>
+                <td className={`${cell} tabular-nums`}>{b.visibilityPct.toFixed(1)}%</td>
+                <td className={`${cell} tabular-nums`}>{sov.toFixed(1)}%</td>
+                {hasComparison && (
+                  <td className={`${cell} tabular-nums`}>
+                    {b.delta == null ? (
+                      <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                    ) : (
+                      <span
+                        className={
+                          b.delta > 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : b.delta < 0
+                              ? "text-red-600 dark:text-red-400"
+                              : "text-zinc-400 dark:text-zinc-600"
+                        }
+                      >
+                        {b.delta > 0 ? "▲" : b.delta < 0 ? "▼" : "–"} {Math.abs(b.delta).toFixed(1)}pp
+                      </span>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The imported benchmark's own competitor list (shown once, under everything else). */
+function BenchmarkBaseline({ benchmarks }: { benchmarks: DashboardData["benchmarksInRange"] }) {
+  if (benchmarks.length === 0) return null;
+  return (
+    <section className="mt-8">
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Benchmark Competitor Baseline
+      </h2>
+      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+        Competitor standing as of the baseline date (shown on the Visibility chart above).
+      </p>
+      <div className="space-y-6">
+        {benchmarks.map((snap) => (
+          <div
+            key={snap.id}
+            className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/40"
+          >
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {snap.source} baseline — {snap.snapshotDate.toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  timeZone: "UTC", // snapshotDate is stored as a UTC-midnight date-only value; without
+                  // pinning the display timezone, a browser/server behind UTC renders the day before.
+                })}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
+                {snap.ownVisibilityPct != null && <span>Visibility: {snap.ownVisibilityPct}%</span>}
+                {snap.ownPosition != null && <span>Position: {snap.ownPosition}</span>}
+                {snap.ownSentiment != null && <span>Sentiment: {snap.ownSentiment}/100</span>}
+              </div>
+            </div>
+
+            {snap.competitors.length > 0 && (
+              <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-3 py-1.5 font-medium">Brand</th>
+                      <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>
+                      <th className="px-3 py-1.5 font-medium tabular-nums">Visibility</th>
+                      <th className="px-3 py-1.5 font-medium tabular-nums">Sentiment</th>
+                      <th className="px-3 py-1.5 font-medium tabular-nums">Share of Voice</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                    {snap.competitors.map((c) => (
+                      <tr key={c.id} className="bg-white dark:bg-zinc-950">
+                        <td className="px-3 py-1.5 font-medium text-zinc-900 dark:text-zinc-100">{c.name}</td>
+                        <td className="px-3 py-1.5 tabular-nums">{c.position ?? "—"}</td>
+                        <td className="px-3 py-1.5 tabular-nums">{c.visibilityPct != null ? `${c.visibilityPct}%` : "—"}</td>
+                        <td className="px-3 py-1.5 tabular-nums">{c.sentiment ?? "—"}</td>
+                        <td className="px-3 py-1.5 tabular-nums">{c.shareOfVoicePct != null ? `${c.shareOfVoicePct}%` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {snap.sourceNote && <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">{snap.sourceNote}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

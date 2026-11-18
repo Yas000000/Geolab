@@ -13,7 +13,7 @@ export interface BrandCrawlPoint {
   mentions: number; // 0 = not mentioned in this crawl
   rank: number | null; // rank by mentions within the crawl (ties share a rank); null when not mentioned
   avgPosition: number | null; // average list position in the answers that mentioned it
-  visibilityPct: number; // mentions / answers in the crawl
+  visibilityPct: number; // answers naming it / answers in the crawl (each answer once)
   sovPct: number; // mentions / all brands' mentions in the crawl
 }
 

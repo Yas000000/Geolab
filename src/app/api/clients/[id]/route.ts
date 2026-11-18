@@ -14,6 +14,8 @@ interface PatchBody {
   schedule?: keyof typeof RunSchedule;
   ga4PropertyId?: string | null;
   gscSiteUrl?: string | null;
+  /** Scheduled runs are Live Search (true) or Training Search (false). */
+  scheduledLiveSearch?: boolean;
   /** Settings > Archive or Delete: true archives the client, false restores it. Sent on its own. */
   archived?: boolean;
 }
@@ -45,6 +47,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
       schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
       ga4PropertyId: body.ga4PropertyId === undefined ? undefined : body.ga4PropertyId || null,
       gscSiteUrl: body.gscSiteUrl === undefined ? undefined : body.gscSiteUrl || null,
+      scheduledLiveSearch: typeof body.scheduledLiveSearch === "boolean" ? body.scheduledLiveSearch : undefined,
     },
   });
 

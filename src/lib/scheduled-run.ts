@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { RunStatus } from "@/generated/prisma/client";
 import { callPipelineAndPersist } from "@/lib/run-persistence";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
+import { pipelineLocations } from "@/lib/client-locations";
 
 /**
  * No inbound Request is available here (this runs from a queue consumer,
@@ -106,7 +107,10 @@ async function runClientReusingPrompts(
     pipelineBody: {
       domain: client.domain,
       brand: brand.name,
-      prompts: latestPromptSet.prompts.map((p) => ({ text: p.text, category: p.category })),
+      // locationIds always go along so the run's own prompt list keeps them (the next
+      // run copies it); only Live Search asks per location (the pipeline ignores them otherwise).
+      prompts: latestPromptSet.prompts.map((p) => ({ text: p.text, category: p.category, locationIds: p.locationIds ?? [] })),
+      locations: await pipelineLocations(clientId),
       live_search: liveSearch,
     },
   });
@@ -120,7 +124,11 @@ async function runClientReusingPrompts(
  * consumer (src/app/api/queues/run-scheduled-client/route.ts).
  */
 export async function runScheduledClient(clientId: string): Promise<void> {
-  const result = await runClientReusingPrompts(clientId, "cron", false);
+  // A client can have its scheduled runs be Live Search (multi-location clients:
+  // monthly Live Searches, the user's plan 2026-11-18); Training Search otherwise.
+  const live = (await prisma.client.findUnique({ where: { id: clientId }, select: { scheduledLiveSearch: true } }))
+    ?.scheduledLiveSearch;
+  const result = await runClientReusingPrompts(clientId, "cron", live === true);
   if (result.ok) {
     await prisma.client.update({ where: { id: clientId }, data: { lastScheduledRunAt: new Date() } });
   } else {
