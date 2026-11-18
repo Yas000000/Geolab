@@ -130,10 +130,23 @@ function inDateWindow(date: Date, range: DateRange | null): boolean {
 
 type BenchmarkData = ClientData["benchmarkSnapshots"][number];
 
-// How a benchmark reads in a Change hover or the section note: "Jun 1 (ISA benchmark)".
-// Its date is a UTC calendar day, so it's shown in UTC (a crawl's is a moment, shown locally).
-const benchmarkDay = (s: BenchmarkData) =>
-  `${s.snapshotDate.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })} (${s.source} benchmark)`;
+// Benchmark dates are UTC calendar days, so they're shown in UTC (a crawl's is a moment, shown locally).
+const utcDay = (d: Date, withYear = false) =>
+  d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}), timeZone: "UTC" });
+type BenchmarkRow = BenchmarkData["prompts"][number];
+// A row can be measured on its own day (MacuMira's Claude rows: Oct 19, from the
+// October report), else on the benchmark's date.
+const rowDate = (s: BenchmarkData, row: BenchmarkRow) => row.measuredOn ?? s.snapshotDate;
+// How a benchmark point reads in a Change hover: "Jun 1 (ISA benchmark)".
+const benchmarkDay = (s: BenchmarkData, date: Date = s.snapshotDate) => `${utcDay(date)} (${s.source} benchmark)`;
+// Platforms whose rows were measured on another day than the benchmark's: ["Claude Oct 19"].
+function otherDays(s: BenchmarkData, withYear = false): string[] {
+  const days = new Map<string, Date>();
+  for (const row of s.prompts) {
+    if (row.platform && row.measuredOn && row.measuredOn.getTime() !== s.snapshotDate.getTime()) days.set(row.platform, row.measuredOn);
+  }
+  return [...days].map(([p, d]) => `${PLATFORM_LABEL[p] ?? p} ${utcDay(d, withYear)}`);
+}
 
 // A benchmark with a prompt row per platform (MacuMira's) can start each
 // platform's Change; one with combined rows only (Yellowbrick's ISA) can't,
@@ -261,20 +274,23 @@ function buildPromptRankings(
       const rows = perPlatformRows(snap);
       if (!rows.length || snap.snapshotDate.getTime() >= firstCrawl) continue;
       const runId = `benchmark:${snap.id}`;
-      const label = benchmarkDay(snap);
+      // The prompt's Visibility Change starts at all its benchmark rows together.
+      const others = otherDays(snap);
+      const visibilityLabel = `${utcDay(snap.snapshotDate)} (${snap.source} benchmark${others.length ? `; ${andList(others)}` : ""})`;
       for (const row of rows) {
         const a = acc.get(row.promptText.trim().toLowerCase());
-        if (!a) continue;
+        const date = rowDate(snap, row);
+        if (!a || date.getTime() >= firstCrawl) continue;
         const point: CrawlPoint = {
           runId,
-          date: snap.snapshotDate,
-          label,
+          date,
+          label: benchmarkDay(snap, date),
           rank: row.position,
           brandsNamed: row.brandsNamed ?? 0,
         };
         const p = ensurePlatform(a, row.platform!);
         if (!p.first || point.date < p.first.date) p.first = point;
-        const v = a.byRun.get(runId) ?? { date: snap.snapshotDate, label, checks: 0, mentioned: 0 };
+        const v = a.byRun.get(runId) ?? { date: snap.snapshotDate, label: visibilityLabel, checks: 0, mentioned: 0 };
         v.checks += 1;
         if (row.position != null) v.mentioned += 1;
         a.byRun.set(runId, v);
@@ -416,18 +432,21 @@ function buildDashboardData(
     // With the Models filter on one platform, a benchmark with per-platform
     // rows shows that platform's own figure (and no point for a platform it
     // didn't cover); one with combined rows only shows its overall figure.
+    // That platform's point sits on the day its rows were measured.
     const rows = perPlatformRows(snap);
     let value = snap.ownVisibilityPct ?? 0;
+    let date = snap.snapshotDate;
     if (platformFilter && rows.length) {
       const mine = rows.filter((p) => p.platform === platformFilter);
       if (!mine.length) continue;
       value = (mine.filter((p) => p.position != null).length / mine.length) * 100;
+      date = rowDate(snap, mine[0]);
     }
     datedPoints.push({
-      date: snap.snapshotDate.getTime(),
+      date: date.getTime(),
       point: {
         runId: `benchmark:${snap.id}`,
-        dateLabel: snap.snapshotDate.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
+        dateLabel: utcDay(date),
         value,
         isBenchmark: true,
       },
@@ -544,7 +563,7 @@ function buildDashboardData(
       : undefined;
   const changeStart = startBenchmark
     ? {
-        label: `${startBenchmark.source} benchmark (${startBenchmark.snapshotDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })})`,
+        label: `${startBenchmark.source} benchmark (${utcDay(startBenchmark.snapshotDate, true)}${otherDays(startBenchmark, true).length ? `; ${andList(otherDays(startBenchmark, true))}` : ""})`,
         latest: crawlDay(answeredRuns[answeredRuns.length - 1].startedAt),
         platforms: [...new Set(perPlatformRows(startBenchmark).map((p) => p.platform!))]
           .filter((p) => platformsAvailable.includes(p))

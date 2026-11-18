@@ -17,6 +17,7 @@ export interface BenchmarkImportPrompt {
   sentiment?: number | null;
   visibilityPct?: number | null;
   brandsNamed?: number | null; // other brands that answer named (per-platform rows)
+  measuredOn?: string | null; // ISO date, when not the snapshot's own date
 }
 
 export interface BenchmarkImportPayload {
@@ -63,6 +64,7 @@ export async function importBenchmarkSnapshot(clientId: string, data: BenchmarkI
           sentiment: p.sentiment ?? null,
           visibilityPct: p.visibilityPct ?? null,
           brandsNamed: p.brandsNamed ?? null,
+          measuredOn: p.measuredOn ? new Date(p.measuredOn) : null,
         })),
       },
     },

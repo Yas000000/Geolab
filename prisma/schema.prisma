@@ -259,6 +259,10 @@ model BenchmarkPromptResult {
   // leaving the client out counts as one place below the last brand it names.
   // Per-platform rows only.
   brandsNamed   Int?
+  // When this row was measured, if not on the snapshot's date: a platform's
+  // benchmark can come from a later source (MacuMira's Claude rows are from
+  // its October 2026 report, Oct 19; its other platforms from Jun 1).
+  measuredOn    DateTime?
 
   @@index([snapshotId])
 }
