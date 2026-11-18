@@ -201,7 +201,17 @@ model BenchmarkSnapshot {
   snapshotDate     DateTime
   ownVisibilityPct Float?
   ownPosition      Float?
-  ownSentiment     Int?     // 0-100, as the source document reports it
+  ownSentiment     Float?   // 0-100, as the source document reports it (e.g. 78.2)
+  // #1 Rankings and Top-3 Visibility, when the source document states them
+  // (MacuMira's: 24 answers at #1, 33.3%). Left null when it doesn't (Yellowbrick's
+  // ISA), and reports then work them out from the prompt table instead
+  // (benchmarkPromptFigures in src/lib/monthly-report.ts).
+  ownRank1Count    Int?     // answers where the client ranked #1
+  ownTop3Pct       Float?   // % of all its answers where the client ranked in the top 3
+  // % of its answers citing the client's own site (or a subdomain), when the source
+  // has the data (MacuMira's: 33.3%, from its keyword.com export). Null: the report
+  // counts it as 0 there (zeroFillBenchmark).
+  ownSiteCitedPct  Float?
   sourceNote       String?  // e.g. the source PDF's filename/path, for traceability
   createdAt        DateTime @default(now())
 

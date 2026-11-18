@@ -109,7 +109,8 @@ export interface ReportComparison {
   sentimentScore: number | null; // an imported benchmark's own 0-100 sentiment score (compared as a %)
   competitors: BenchmarkCompetitorRow[] | null; // an imported benchmark's competitor table
   assumedZero?: string[]; // scorecard figures an imported benchmark didn't report, counted as 0 (zeroFillBenchmark)
-  fromPromptTable?: string[]; // scorecard figures worked out from its prompt table (benchmarkPromptFigures)
+  fromPromptTable?: string[]; // scorecard figures worked out from its prompt table, not stated by it (benchmarkPromptFigures)
+  ownSiteCitedPct?: number | null; // an imported benchmark's % of answers citing the client's site, when it has it
 }
 
 export interface RunCounts {
@@ -573,7 +574,11 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
     if (!snap) return null;
     const day = isoDay(snap.snapshotDate);
     const date = daysLabel([day]);
-    const fromPrompts = benchmarkPromptFigures(snap.ownVisibilityPct, snap.prompts);
+    // Figures the benchmark states itself win; the rest are worked out from its prompt table.
+    const fromPrompts = benchmarkPromptFigures(snap.ownVisibilityPct, snap.prompts, {
+      rank1Count: snap.ownRank1Count,
+      top3Pct: snap.ownTop3Pct,
+    });
     const score: CompareScore = {
       checks: null,
       visibilityPct: snap.ownVisibilityPct,
@@ -597,6 +602,7 @@ async function resolveCompare(clientId: string, period: ReportPeriod, spec: Comp
         source: snap.source,
         sentimentScore: snap.ownSentiment,
         fromPromptTable: fromPrompts.labels,
+        ownSiteCitedPct: snap.ownSiteCitedPct,
         competitors: [...snap.competitors]
           .sort((a, b) => (b.shareOfVoicePct ?? -1) - (a.shareOfVoicePct ?? -1))
           .map((c) => ({ name: c.name, sharePct: c.shareOfVoicePct, visibilityPct: c.visibilityPct, position: c.position })),
@@ -724,21 +730,40 @@ export async function buildMonthlyReportData(
 }
 
 /**
- * #1 Rankings and Top-3 Visibility at an imported benchmark, from its prompt
+ * #1 Rankings and Top-3 Visibility at an imported benchmark. A figure the
+ * benchmark states itself is used as stated (MacuMira's Updated GEO
+ * Benchmarks: 24 answers at #1, 33.3%). The prompt table keeps one rank per
+ * prompt (its best on any engine), so working them out from it undercounts
+ * #1 answers and can overcount the top 3 whenever a prompt ranked on more
+ * than one engine (the user's call, 2026-11-18). Otherwise, from its prompt
  * table (the user's call, 2026-11-17, over counting them as 0):
  * - #1 Rankings: its prompts where the client ranked #1 (a prompt count; the
  *   report's own figure counts answers, the closest the benchmark has);
  * - Top-3 Visibility: its overall visibility, scaled by the share of that
  *   visibility from prompts ranked in the top 3 (all of it when every found
  *   prompt ranked top 3, e.g. Yellowbrick's ISA: one prompt, at #1).
- * No prompt table: both stay null (and zeroFillBenchmark counts them as 0).
+ * labels lists only the figures worked out from the prompt table.
+ * Neither stated nor a prompt table: both stay null (zeroFillBenchmark counts them as 0).
  */
 function benchmarkPromptFigures(
   ownVisibilityPct: number | null,
   prompts: { position: number | null; visibilityPct: number | null }[],
+  stated: { rank1Count: number | null; top3Pct: number | null },
 ): { rank1Count: number | null; top3Pct: number | null; labels: string[] } {
-  if (!prompts.length) return { rank1Count: null, top3Pct: null, labels: [] };
-  const labels = ["#1 Rankings"];
+  const derived = deriveFromPromptTable(ownVisibilityPct, prompts);
+  const labels: string[] = [];
+  const rank1Count = stated.rank1Count ?? derived.rank1Count;
+  if (stated.rank1Count == null && derived.rank1Count != null) labels.push("#1 Rankings");
+  const top3Pct = stated.top3Pct ?? derived.top3Pct;
+  if (stated.top3Pct == null && derived.top3Pct != null) labels.push("Top-3 Visibility");
+  return { rank1Count, top3Pct, labels };
+}
+
+function deriveFromPromptTable(
+  ownVisibilityPct: number | null,
+  prompts: { position: number | null; visibilityPct: number | null }[],
+): { rank1Count: number | null; top3Pct: number | null } {
+  if (!prompts.length) return { rank1Count: null, top3Pct: null };
   const rank1Count = prompts.filter((p) => p.position != null && p.position <= 1).length;
   let top3Pct: number | null = null;
   if (ownVisibilityPct != null) {
@@ -749,9 +774,8 @@ function benchmarkPromptFigures(
     const total = found.reduce((a, p) => a + weight(p), 0);
     const inTop3 = found.filter((p) => p.position != null && p.position <= 3).reduce((a, p) => a + weight(p), 0);
     top3Pct = total > 0 ? (ownVisibilityPct * inTop3) / total : 0;
-    labels.push("Top-3 Visibility");
   }
-  return { rank1Count, top3Pct, labels };
+  return { rank1Count, top3Pct };
 }
 
 /**
@@ -781,7 +805,7 @@ function zeroFillBenchmark(d: MonthlyReportData): MonthlyReportData {
     filled.top3Pct = 0;
     assumedZero.push("Top-3 Visibility");
   }
-  if (d.citations && !d.citations.previous) assumedZero.push("Answers Citing Your Site");
+  if (d.citations && !d.citations.previous && d.compare.ownSiteCitedPct == null) assumedZero.push("Answers Citing Your Site");
   return { ...d, scorecard: { ...d.scorecard, previous: filled }, compare: { ...d.compare, assumedZero } };
 }
 
@@ -898,13 +922,16 @@ export async function writeTakeaways(d: MonthlyReportData): Promise<ReportTakeaw
     ],
   ];
   if (d.citations) {
+    // An imported benchmark has no citation answers, but may have its own-site figure.
+    const citingCompared =
+      d.citations.previous ?? (c.ownSiteCitedPct != null ? { answers: null, ownSitePct: c.ownSiteCitedPct } : null);
     jobs.push([
       "citations",
-      `${STYLE}\n\nSection: AI Citations (the web pages AI answers linked to as sources, from Live Search answers only)\nBrand: ${brand}\nPeriod: ${d.citations.previous ? period : d.period.label}${d.citations.previous ? what : none("citation")}\nData: ${JSON.stringify({
+      `${STYLE}\n\nSection: AI Citations (the web pages AI answers linked to as sources, from Live Search answers only)\nBrand: ${brand}\nPeriod: ${citingCompared ? period : d.period.label}${citingCompared ? what : none("citation")}\nData: ${JSON.stringify({
         current: { answers: d.citations.current.answers, own_site_cited_pct: r1(d.citations.current.ownSitePct), sites_cited: d.citations.current.sitesCited },
-        comparison: d.citations.previous && { answers: d.citations.previous.answers, own_site_cited_pct: r1(d.citations.previous.ownSitePct) },
+        comparison: citingCompared && { answers: citingCompared.answers, own_site_cited_pct: r1(citingCompared.ownSitePct) },
         top_sites: d.citations.topSites.map((s) => ({ site: s.domain, is_own_site: s.isOwn, share_pct: r1(s.sharePct), comparison_share_pct: r1(s.previousSharePct) })),
-      })}\nField meanings: own_site_cited_pct = % of answers that linked to the brand's own website. share_pct = % of answers that cited that site. A null comparison value means there were no Live Search answers in the comparison.\n\nWrite the Key Takeaway sentence now, describing how often the brand's own site is cited and which sites AI cites most.`,
+      })}\nField meanings: own_site_cited_pct = % of answers that linked to the brand's own website. share_pct = % of answers that cited that site. ${d.citations.previous ? "A null comparison value means there were no Live Search answers in the comparison." : citingCompared ? "The benchmark recorded only how often its answers cited the brand's own site, so the other comparison values are null; never describe other sites as changing." : "A null comparison value means there were no Live Search answers in the comparison."}\n\nWrite the Key Takeaway sentence now, describing how often the brand's own site is cited and which sites AI cites most.`,
     ]);
   }
   if (d.traffic) {

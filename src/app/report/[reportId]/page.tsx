@@ -229,15 +229,27 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
   // Against an imported benchmark, every platform is compared with its one all-platform figure.
   const platformsCompared = d.platforms.some((p) => p.previous);
   const competitorsCompared = d.competitors.some((x) => x.previous);
-  // Answers citing the site in the comparison; an imported benchmark has no citation data, so it counts as 0.
-  const citingThen = d.citations?.previous?.ownSitePct ?? (c.assumedZero?.includes("Answers Citing Your Site") ? 0 : null);
+  // Answers citing the site in the comparison: an imported benchmark's own figure when it has
+  // one (MacuMira's, from its keyword.com export), else it counts as 0 there.
+  const citingThen =
+    d.citations?.previous?.ownSitePct ?? c.ownSiteCitedPct ?? (c.assumedZero?.includes("Answers Citing Your Site") ? 0 : null);
   // "A, B and C": house style, no Oxford comma.
   const andList = (xs: string[]) => xs.reduce((acc, x, i) => (i === 0 ? x : `${acc}${i === xs.length - 1 ? " and " : ", "}${x}`), "");
   // How the benchmark's scorecard figures were filled in, for the note under the tiles.
+  const fromTable = {
+    rank1: !!c.fromPromptTable?.includes("#1 Rankings"),
+    top3: !!c.fromPromptTable?.includes("Top-3 Visibility"),
+  };
   const benchmarkNote = isBenchmark
     ? [
-        c.fromPromptTable?.includes("#1 Rankings") &&
-          `#1 Rankings ${then} counts its prompts where ${brand} ranked #1${c.fromPromptTable.includes("Top-3 Visibility") ? ", and Top-3 Visibility is its visibility from prompts ranked in the top 3" : ""}, from its prompt table.`,
+        // Only the figures worked out from its prompt table; ones the benchmark states need no note.
+        c.fromPromptTable?.length &&
+          `${[
+            fromTable.rank1 && `#1 Rankings ${then} counts its prompts where ${brand} ranked #1`,
+            fromTable.top3 && `Top-3 Visibility${fromTable.rank1 ? "" : ` ${then}`} is its visibility from prompts ranked in the top 3`,
+          ]
+            .filter(Boolean)
+            .join(", and ")}, from its prompt table.`,
         c.sentimentScore != null && `Its sentiment score of ${c.sentimentScore}/100 counts as ${c.sentimentScore}%.`,
         c.assumedZero?.length &&
           `It didn't report ${andList(c.assumedZero)}, so ${c.assumedZero.length === 1 ? "that counts" : "those count"} as 0 there.`,

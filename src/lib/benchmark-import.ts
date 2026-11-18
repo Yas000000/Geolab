@@ -21,6 +21,9 @@ export interface BenchmarkImportPayload {
   ownVisibilityPct?: number | null;
   ownPosition?: number | null;
   ownSentiment?: number | null;
+  ownRank1Count?: number | null; // only when the source states it (see BenchmarkSnapshot)
+  ownTop3Pct?: number | null; // only when the source states it
+  ownSiteCitedPct?: number | null; // only when the source has the data
   sourceNote?: string | null;
   competitors?: BenchmarkImportCompetitor[];
   prompts?: BenchmarkImportPrompt[];
@@ -35,6 +38,9 @@ export async function importBenchmarkSnapshot(clientId: string, data: BenchmarkI
       ownVisibilityPct: data.ownVisibilityPct ?? null,
       ownPosition: data.ownPosition ?? null,
       ownSentiment: data.ownSentiment ?? null,
+      ownRank1Count: data.ownRank1Count ?? null,
+      ownTop3Pct: data.ownTop3Pct ?? null,
+      ownSiteCitedPct: data.ownSiteCitedPct ?? null,
       sourceNote: data.sourceNote ?? null,
       competitors: {
         create: (data.competitors ?? []).map((c) => ({
