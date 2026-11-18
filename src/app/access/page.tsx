@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTeamPage } from "@/lib/viewer";
 import { CLIENT_TABS, cleanTabs } from "@/lib/auth";
 import { LocalTime, TeamAccess } from "@/components/access";
+import { PAGE_WIDTH } from "@/lib/page-width";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Access · GEO Reporting Portal" };
@@ -32,7 +33,7 @@ export default async function AccessPage() {
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
-      <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 md:py-10">
+      <div className={`mx-auto ${PAGE_WIDTH} px-4 py-6 sm:px-6 md:py-10`}>
         <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50">Access</h1>
         <p className="mb-8 mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Who can sign in to the portal. Team logins see every client and can run everything. A client login sees only

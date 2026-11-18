@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useChartWidth } from "@/lib/use-chart-width";
 
 export interface SessionCountPoint {
   key: string;
@@ -8,10 +9,10 @@ export interface SessionCountPoint {
   value: number;
 }
 
-const WIDTH = 400;
+// Drawn at the card's real width (useChartWidth), so it fills the card on a wide
+// page instead of a fixed 400px drawing centered in it.
 const HEIGHT = 120;
 const PADDING = { top: 12, right: 8, bottom: 20, left: 8 };
-const INNER_WIDTH = WIDTH - PADDING.left - PADDING.right;
 const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;
 
 /**
@@ -23,6 +24,8 @@ const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;
  */
 export function SessionCountSparkline({ points, color = "#2563eb" }: { points: SessionCountPoint[]; color?: string }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [ref, WIDTH] = useChartWidth(400);
+  const INNER_WIDTH = WIDTH - PADDING.left - PADDING.right;
 
   if (points.length === 0) {
     return (
@@ -44,7 +47,7 @@ export function SessionCountSparkline({ points, color = "#2563eb" }: { points: S
     ` L ${xFor(points.length - 1)} ${PADDING.top + INNER_HEIGHT} Z`;
 
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full" style={{ height: HEIGHT }}>
         {points.length > 1 && <path d={areaPath} fill={color} fillOpacity={0.08} stroke="none" />}
         {points.length > 1 && (

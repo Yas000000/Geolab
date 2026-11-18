@@ -82,7 +82,7 @@ const RANK_CHART_BRANDS = 5;
 // Prompt Rankings' first column: pinned while the platform columns scroll
 // sideways, wide enough that a prompt isn't one word per line on a phone.
 // From md up it's at least 16rem and takes whatever the (tight, no-wrap)
-// number columns leave: this tab gets a wider page (page-frame.tsx) so
+// number columns leave: pages are 96rem wide (src/lib/page-width.ts) so
 // every column shows on load from a 1280px screen up.
 // The divider is an inset shadow because a collapsed-table border doesn't
 // travel with a sticky cell. Each cell still sets its own background.

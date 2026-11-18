@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { PLATFORM_LABEL, CATEGORY_LABEL } from "@/lib/geo-platform-map";
 import { requireTeamPage } from "@/lib/viewer";
+import { PAGE_WIDTH } from "@/lib/page-width";
 
 export const dynamic = "force-dynamic";
 
@@ -183,7 +184,7 @@ export default async function RunPage({
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 md:py-10">
+      <div className={`mx-auto ${PAGE_WIDTH} px-4 py-6 sm:px-6 md:py-10`}>
         <header className="mb-8">
           <Link
             href={`/clients/${run.client.id}/settings`}
