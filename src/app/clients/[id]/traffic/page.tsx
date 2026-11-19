@@ -16,7 +16,8 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       analyticsSnapshots: { orderBy: { date: "asc" } },
-      searchConsoleSnapshots: { orderBy: { date: "asc" } },
+      // Search Console is still pulled daily (Settings picks the site) but is left off
+      // this page for now, at the user's request (2026-11-19).
       aiTrafficSnapshots: { orderBy: { date: "asc" } },
       // Only the earliest of each -- they define "All Time" (geoAllTimeRange).
       runs: { where: { status: "COMPLETE" }, orderBy: { startedAt: "asc" }, take: 1, select: { startedAt: true } },
@@ -31,11 +32,6 @@ function inDateWindow(date: Date, range: DateRange | null): boolean {
   if (!range) return true;
   const endExclusive = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate() + 1);
   return date.getTime() >= range.start.getTime() && date.getTime() < endExclusive.getTime();
-}
-
-// Snapshot dates are UTC-midnight days -- format in UTC so the day can't shift.
-function formatUtcDay(d: Date) {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 function dateLabel(d: Date) {
@@ -71,7 +67,6 @@ export default async function ClientTrafficPage({
   const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
   const trafficStarts = [
     ...client.analyticsSnapshots.map((s) => utcCalendarDay(s.date)),
-    ...client.searchConsoleSnapshots.map((s) => utcCalendarDay(s.date)),
     ...client.aiTrafficSnapshots.map((s) => utcCalendarDay(s.date)),
   ];
   const allTimeRange: DateRange | null =
@@ -82,32 +77,13 @@ export default async function ClientTrafficPage({
   const windowRange = dateRange ?? allTimeRange;
 
   const ga4InRange = client.analyticsSnapshots.filter((s) => inDateWindow(s.date, windowRange));
-  const gscInRange = client.searchConsoleSnapshots.filter((s) => inDateWindow(s.date, windowRange));
-  // Search Console only keeps ~16 months while GA4 history goes back years,
-  // so a range reaching past GSC's earliest day would otherwise show
-  // partial (or zero) GSC totals that read like real low traffic.
-  const gscEarliest = client.searchConsoleSnapshots.find((s) => s.clicks != null || s.impressions != null)?.date;
-  const rangeStart = windowRange?.start;
-  const gscHistoryNote =
-    gscEarliest && rangeStart && rangeStart.getTime() < gscEarliest.getTime()
-      ? `Search Console only keeps 16 months of data, so these figures start ${formatUtcDay(gscEarliest)}.`
-      : null;
   const aiInRange = client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, windowRange));
 
   const sumGa4 = (field: "sessions" | "activeUsers" | "keyEvents") =>
     ga4InRange.reduce((acc, s) => acc + (s[field] ?? 0), 0);
-  const sumGsc = (field: "clicks" | "impressions") => gscInRange.reduce((acc, s) => acc + (s[field] ?? 0), 0);
-  const avgGsc = (field: "ctr" | "avgPosition") => {
-    const vals = gscInRange.map((s) => s[field]).filter((v): v is number => v != null);
-    return vals.length ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
-  };
 
   const sessions = sumGa4("sessions");
   const activeUsers = sumGa4("activeUsers");
-  const clicks = sumGsc("clicks");
-  const impressions = sumGsc("impressions");
-  const avgCtr = avgGsc("ctr");
-  const avgPosition = avgGsc("avgPosition");
 
   const sessionsTrend: SessionCountPoint[] = ga4InRange.map((s) => ({
     key: s.id,
@@ -119,17 +95,6 @@ export default async function ClientTrafficPage({
     dateLabel: dateLabel(s.date),
     value: s.activeUsers ?? 0,
   }));
-  const clicksTrend: SessionCountPoint[] = gscInRange.map((s) => ({
-    key: s.id,
-    dateLabel: dateLabel(s.date),
-    value: s.clicks ?? 0,
-  }));
-  const impressionsTrend: SessionCountPoint[] = gscInRange.map((s) => ({
-    key: s.id,
-    dateLabel: dateLabel(s.date),
-    value: s.impressions ?? 0,
-  }));
-
   const sumAi = (field: "aiAssistantSessions" | "referralAiSessions" | "unassignedAiSessions" | "directSessions") =>
     aiInRange.reduce((acc, s) => acc + (s[field] ?? 0), 0);
   const aiAssistantTotal = sumAi("aiAssistantSessions");
@@ -151,7 +116,7 @@ export default async function ClientTrafficPage({
         <DateRangePicker allTimeRange={allTimeRange} />
       </header>
 
-      {ga4InRange.length === 0 && gscInRange.length === 0 && aiInRange.length === 0 ? (
+      {ga4InRange.length === 0 && aiInRange.length === 0 ? (
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
           {viewer.role === "TEAM" ? (
             <>
@@ -200,63 +165,6 @@ export default async function ClientTrafficPage({
                   </div>
                 </div>
               </div>
-            )}
-          </section>
-
-          <section className="mb-8">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Search Console
-            </h2>
-            {gscHistoryNote && gscInRange.length > 0 && (
-              <p className="-mt-2 mb-3 text-xs text-zinc-500 dark:text-zinc-400">{gscHistoryNote}</p>
-            )}
-            {gscInRange.length === 0 ? (
-              <div className="rounded-lg border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-                {gscEarliest && rangeStart && rangeStart.getTime() < gscEarliest.getTime()
-                  ? `No Search Console data in this range. Search Console only keeps 16 months, so its data starts ${formatUtcDay(gscEarliest)}.`
-                  : "No GSC data in this range."}
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-                    <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                      Clicks
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                      {clicks.toLocaleString()}
-                    </div>
-                    <div className="mt-2">
-                      <SessionCountSparkline points={clicksTrend} color="#059669" />
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-                    <div className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                      Impressions
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                      {impressions.toLocaleString()}
-                    </div>
-                    <div className="mt-2">
-                      <SessionCountSparkline points={impressionsTrend} color="#d97706" />
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
-                  <div>
-                    <span className="text-zinc-500 dark:text-zinc-400">Avg CTR: </span>
-                    <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
-                      {avgCtr != null ? `${(avgCtr * 100).toFixed(1)}%` : "—"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-zinc-500 dark:text-zinc-400">Avg Position: </span>
-                    <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
-                      {avgPosition != null ? avgPosition.toFixed(1) : "—"}
-                    </span>
-                  </div>
-                </div>
-              </>
             )}
           </section>
 

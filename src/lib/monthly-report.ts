@@ -94,8 +94,8 @@ export interface TrafficTotals {
   measuredAiTotal: number;
   direct: number;
   directAiEstimate: { low: number; high: number };
-  gscClicks: number | null;
-  gscImpressions: number | null;
+  // Search Console clicks were dropped from reports at the user's request (2026-11-19).
+  // Reports saved before then still carry gscClicks/gscImpressions; the page ignores them.
   days: number; // days with Google Analytics data -- below daysInPeriod means a partial period
   daysInPeriod: number;
 }
@@ -541,12 +541,11 @@ function citationSection(current: RunRows, previous: RunRows, ownDomain: string 
 async function trafficTotals(clientId: string, period: ReportPeriod): Promise<TrafficTotals | null> {
   const b = periodBounds(period);
   const where = { clientId, date: { gte: b.start, lt: b.end } };
-  const [ga4, ai, gsc] = await Promise.all([
+  const [ga4, ai] = await Promise.all([
     prisma.analyticsSnapshot.findMany({ where, select: { sessions: true } }),
     prisma.aiTrafficSnapshot.findMany({ where }),
-    prisma.searchConsoleSnapshot.findMany({ where, select: { clicks: true, impressions: true } }),
   ]);
-  if (!ga4.length && !ai.length && !gsc.length) return null;
+  if (!ga4.length && !ai.length) return null;
   const sum = <T,>(rows: T[], f: (r: T) => number | null) => rows.reduce((a, r) => a + (f(r) ?? 0), 0);
   const aiAssistant = sum(ai, (r) => r.aiAssistantSessions);
   const referralAi = sum(ai, (r) => r.referralAiSessions);
@@ -561,8 +560,6 @@ async function trafficTotals(clientId: string, period: ReportPeriod): Promise<Tr
     measuredAiTotal: aiAssistant + referralAi + unassignedAi,
     direct,
     directAiEstimate: { low: est.low, high: est.high },
-    gscClicks: gsc.length ? sum(gsc, (r) => r.clicks) : null,
-    gscImpressions: gsc.length ? sum(gsc, (r) => r.impressions) : null,
     days: Math.max(ga4.length, ai.length),
     daysInPeriod: periodDays(period.start, period.end),
   };

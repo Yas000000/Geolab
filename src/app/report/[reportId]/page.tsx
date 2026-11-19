@@ -804,9 +804,6 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                   <TrafficRow label="Unassigned visits from AI platforms" cur={d.traffic.current.unassignedAi} prev={prevTraffic?.unassignedAi} />
                   <TrafficRow label="Measured AI visits, total" cur={d.traffic.current.measuredAiTotal} prev={prevTraffic?.measuredAiTotal} />
                   <TrafficRow label="All website sessions" cur={d.traffic.current.sessions} prev={prevTraffic?.sessions} />
-                  {d.traffic.current.gscClicks != null && (
-                    <TrafficRow label="Google Search clicks" cur={d.traffic.current.gscClicks} prev={prevTraffic?.gscClicks} />
-                  )}
                 </tbody>
               </Table>
               {(isBenchmark || c.kind === "firstCrawl") && c.trafficPeriod && (
