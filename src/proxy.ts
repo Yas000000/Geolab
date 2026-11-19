@@ -16,7 +16,7 @@ import { SESSION_COOKIE, clientMayOpen, homePath, sessionViewer } from "@/lib/au
  * Every page and route also checks again next to its data (src/lib/viewer.ts).
  */
 
-const OPEN = [/^\/login$/, /^\/api\/auth\/login$/, /^\/report\/[^/]+$/];
+const OPEN = [/^\/login$/, /^\/api\/auth\/login$/, /^\/report\/[^/]+$/, /^\/privacy$/];
 const OWN_SECRET = [
   /^\/api\/cron\//,
   /^\/api\/queues\//,
