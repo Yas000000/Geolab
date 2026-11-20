@@ -2,7 +2,7 @@ import type { OAuth2Client } from "google-auth-library";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { fetchGa4DailySeries, fetchGscDailySeries } from "@/lib/google-metrics";
-import { fetchAiTrafficDailySeries } from "@/lib/ai-traffic";
+import { fetchAiTrafficDailySeries, fetchCountryTrafficDailySeries } from "@/lib/ai-traffic";
 import { getGoogleOAuthClient, isAuthError, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
 
 // Search Console's own retention limit (~16 months) -- it has nothing older.
@@ -31,9 +31,11 @@ function dayToDate(key: string): Date {
   return new Date(`${key}T00:00:00.000Z`);
 }
 
+// Prisma's default 5 s per transaction is too short for 200 upserts from far
+// away (every history import run from a local machine hit it); 60 s is ample.
 async function upsertInBatches<T>(ops: Prisma.PrismaPromise<T>[]) {
   for (let i = 0; i < ops.length; i += 200) {
-    await prisma.$transaction(ops.slice(i, i + 200));
+    await prisma.$transaction(ops.slice(i, i + 200), { timeout: 60_000 });
   }
 }
 
@@ -41,6 +43,42 @@ export interface AnalyticsSyncResult {
   ga4Days: number;
   aiDays: number;
   gscDays: number;
+  countryDays: number; // day x country rows, for the countries of the client's locations
+}
+
+/** The distinct countries of a client's locations (MacuMira: CA, AU, NZ), in location order. */
+export async function locationCountries(clientId: string): Promise<string[]> {
+  const rows = await prisma.clientLocation.findMany({ where: { clientId }, orderBy: { position: "asc" }, select: { country: true } });
+  return [...new Set(rows.map((r) => r.country))];
+}
+
+/**
+ * GA4 traffic per country for the countries of the client's locations,
+ * upserted one row per day per country. Nothing to do for a client with no
+ * locations or no GA4 property. Throws on any Google API error, like the rest.
+ */
+export async function syncCountryTraffic(
+  oauthClient: OAuth2Client,
+  client: { id: string; ga4PropertyId: string | null },
+  range: { start: Date; end: Date },
+): Promise<number> {
+  if (!client.ga4PropertyId) return 0;
+  const countries = await locationCountries(client.id);
+  if (!countries.length) return 0;
+  const clientId = client.id;
+  const series = await fetchCountryTrafficDailySeries(oauthClient, client.ga4PropertyId, countries, range.start, range.end);
+  await upsertInBatches(
+    [...series].map(([key, day]) => {
+      const [dayKey, country] = key.split("|");
+      const date = dayToDate(dayKey);
+      return prisma.countryTrafficSnapshot.upsert({
+        where: { clientId_date_country: { clientId, date, country } },
+        create: { clientId, date, country, ...day },
+        update: day,
+      });
+    }),
+  );
+  return series.size;
 }
 
 /**
@@ -56,7 +94,7 @@ export async function syncClientAnalytics(
   client: { id: string; ga4PropertyId: string | null; gscSiteUrl: string | null },
   range: { ga4Start: Date; gscStart: Date; end: Date },
 ): Promise<AnalyticsSyncResult> {
-  const result: AnalyticsSyncResult = { ga4Days: 0, aiDays: 0, gscDays: 0 };
+  const result: AnalyticsSyncResult = { ga4Days: 0, aiDays: 0, gscDays: 0, countryDays: 0 };
   const clientId = client.id;
   const { ga4Start, gscStart, end: endDate } = range;
 
@@ -86,6 +124,8 @@ export async function syncClientAnalytics(
       }),
     );
     result.aiDays = ai.size;
+
+    result.countryDays = await syncCountryTraffic(oauthClient, client, { start: ga4Start, end: endDate });
   }
 
   if (client.gscSiteUrl) {
@@ -151,5 +191,24 @@ export async function importHistoryForClient(clientId: string): Promise<ImportHi
       return { ok: false, reason: "auth_expired", error };
     }
     return { ok: false, reason: "failed", error };
+  }
+}
+
+/**
+ * A client's full GA4 history for its locations' countries only -- run after a
+ * location is added or its country changes, so its Traffic view fills in
+ * without re-pulling everything else. Errors are logged, not thrown (it runs
+ * after the response, like the import after saving Settings).
+ */
+export async function importCountryHistoryForClient(clientId: string): Promise<void> {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true, ga4PropertyId: true } });
+    if (!client?.ga4PropertyId) return;
+    const oauthClient = await getGoogleOAuthClient();
+    if (!oauthClient) return;
+    const rows = await syncCountryTraffic(oauthClient, client, { start: GA4_EARLIEST_DATE, end: utcDaysAgo(1) });
+    console.log(`[analytics-import] client ${clientId}: ${rows} country day rows`);
+  } catch (err) {
+    console.log(`[analytics-import] client ${clientId} country import failed: ${err instanceof Error ? err.message : err}`);
   }
 }

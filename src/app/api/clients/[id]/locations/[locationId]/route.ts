@@ -1,10 +1,14 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/viewer";
 import { cleanLocation, type LocationInput } from "@/lib/client-locations";
 import { getTrackedPromptSet, saveTrackedPrompts } from "@/lib/tracked-prompts";
+import { importCountryHistoryForClient } from "@/lib/analytics-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Long enough for the after() import when a location's country changes.
+export const maxDuration = 800;
 
 type Ctx = RouteContext<"/api/clients/[id]/locations/[locationId]">;
 
@@ -28,6 +32,7 @@ export async function PATCH(request: Request, ctx: Ctx): Promise<Response> {
   });
   if (clash) return Response.json({ error: `There's already a location called "${loc.label}".` }, { status: 400 });
   const location = await prisma.clientLocation.update({ where: { id: locationId }, data: loc });
+  if (loc.country !== existing.country) after(importCountryHistoryForClient(id));
   return Response.json({ location });
 }
 

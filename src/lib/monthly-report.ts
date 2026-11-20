@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PLATFORM_LABEL } from "@/lib/geo-platform-map";
 import { benchmarkDateGroups } from "@/lib/benchmark-dates";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
+import { countryName } from "@/lib/client-locations";
 import { citationTrackedRuns, isLiveSearchModel, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { CRAWL_VENDOR_LABEL, latestCrawlCheck } from "@/lib/crawl-check";
 import { competitorStats, matchBenchmarkNames, nameKeys } from "@/lib/competitor-table";
@@ -171,7 +172,9 @@ export interface MonthlyReportData {
   };
   competitors: CompetitorRow[];
   citations: CitationSection | null;
-  traffic: { current: TrafficTotals; previous: TrafficTotals | null } | null;
+  // country: set when the figures are one location's country only (GA4 visits from there,
+  // e.g. "CA"); unset = the whole site. Reports saved before 2026-11-20 never set it.
+  traffic: { current: TrafficTotals; previous: TrafficTotals | null; country?: string | null } | null;
   crawl: { checkedAt: string; url: string; results: { label: string; success: boolean }[] } | null;
 }
 
@@ -538,14 +541,23 @@ function citationSection(current: RunRows, previous: RunRows, ownDomain: string 
   };
 }
 
-async function trafficTotals(clientId: string, period: ReportPeriod): Promise<TrafficTotals | null> {
+/**
+ * The whole site's Google Analytics totals for a period, or (with `country`) the visits from
+ * that country only. A country has no row on a day nobody visited from there, so its days of
+ * data are the whole site's (a day the site has data and the country has none is 0 visits,
+ * not a missing day).
+ */
+async function trafficTotals(clientId: string, period: ReportPeriod, country?: string): Promise<TrafficTotals | null> {
   const b = periodBounds(period);
   const where = { clientId, date: { gte: b.start, lt: b.end } };
-  const [ga4, ai] = await Promise.all([
+  const [siteGa4, siteAi] = await Promise.all([
     prisma.analyticsSnapshot.findMany({ where, select: { sessions: true } }),
     prisma.aiTrafficSnapshot.findMany({ where }),
   ]);
-  if (!ga4.length && !ai.length) return null;
+  if (!siteGa4.length && !siteAi.length) return null;
+  const countryRows = country ? await prisma.countryTrafficSnapshot.findMany({ where: { ...where, country } }) : null;
+  const ai = countryRows ?? siteAi;
+  const siteDays = Math.max(siteGa4.length, siteAi.length);
   const sum = <T,>(rows: T[], f: (r: T) => number | null) => rows.reduce((a, r) => a + (f(r) ?? 0), 0);
   const aiAssistant = sum(ai, (r) => r.aiAssistantSessions);
   const referralAi = sum(ai, (r) => r.referralAiSessions);
@@ -553,14 +565,14 @@ async function trafficTotals(clientId: string, period: ReportPeriod): Promise<Tr
   const direct = sum(ai, (r) => r.directSessions);
   const est = estimateDirectAiSessions(direct);
   return {
-    sessions: ga4.length ? sum(ga4, (r) => r.sessions) : null,
+    sessions: countryRows ? sum(countryRows, (r) => r.sessions) : siteGa4.length ? sum(siteGa4, (r) => r.sessions) : null,
     aiAssistant,
     referralAi,
     unassignedAi,
     measuredAiTotal: aiAssistant + referralAi + unassignedAi,
     direct,
     directAiEstimate: { low: est.low, high: est.high },
-    days: Math.max(ga4.length, ai.length),
+    days: siteDays,
     daysInPeriod: periodDays(period.start, period.end),
   };
 }
@@ -765,10 +777,16 @@ export async function buildMonthlyReportData(
   const compare = await resolveCompare(clientId, period, spec);
   if (!compare) return "compare_not_found";
 
+  // Traffic: one location's report gets its country's visits only; "none" (answers searched
+  // with no location) has no traffic of its own; the whole client gets the whole site.
+  const trafficCountry = locationKey && locationKey !== "none"
+    ? (await prisma.clientLocation.findFirst({ where: { id: locationKey, clientId }, select: { country: true } }))?.country
+    : undefined;
+  const noTraffic = locationKey === "none";
   const [allCurRuns, curTraffic, prevTraffic, crawl] = await Promise.all([
     loadRuns(clientId, inPeriod(period)),
-    trafficTotals(clientId, period),
-    compare.info.trafficPeriod ? trafficTotals(clientId, compare.info.trafficPeriod) : null,
+    noTraffic ? null : trafficTotals(clientId, period, trafficCountry),
+    !noTraffic && compare.info.trafficPeriod ? trafficTotals(clientId, compare.info.trafficPeriod, trafficCountry) : null,
     latestCrawlCheck(clientId),
   ]);
   const curRuns = onlyLocation(allCurRuns, locationKey);
@@ -839,7 +857,7 @@ export async function buildMonthlyReportData(
       client.brands[0] ? { key: client.brands[0].id, name: client.brands[0].name } : null,
     ),
     citations: citationSection(curRuns, compare.runs, siteDomain(client.domain)),
-    traffic: curTraffic ? { current: curTraffic, previous: prevTraffic } : null,
+    traffic: curTraffic ? { current: curTraffic, previous: prevTraffic, ...(trafficCountry ? { country: trafficCountry } : {}) } : null,
     crawl: crawl
       ? {
           checkedAt: crawl.checkedAt.toISOString(),
@@ -985,6 +1003,9 @@ async function ask(prompt: string): Promise<string | null> {
 
 const r1 = (n: number | null | undefined) => (n == null ? null : Math.round(n * 10) / 10);
 
+/** Every takeaway but traffic's: the sections an All locations report draws per location. */
+const ANSWER_TAKEAWAYS: (keyof ReportTakeaways)[] = ["scorecard", "platforms", "prompts", "competitors", "citations"];
+
 export async function writeTakeaways(d: MonthlyReportData, only?: (keyof ReportTakeaways)[]): Promise<ReportTakeaways> {
   const brand = d.brandName ?? d.clientName;
   const c = d.compare;
@@ -1082,9 +1103,12 @@ export async function writeTakeaways(d: MonthlyReportData, only?: (keyof ReportT
       ? `\n${caveat} Never describe a total as rising or falling between the periods. Describe ${d.period.label}'s AI traffic and how many days of data it covers instead.`
       : "";
     const trafficWhat = isBenchmark || c.kind === "firstCrawl" ? `\nThe comparison period is the ${d.traffic.current.daysInPeriod} days up to ${c.phrase}.` : "";
+    const fromCountry = d.traffic.country
+      ? `\nThese are visits from ${countryName(d.traffic.country)} only (Google Analytics' visitor country), not the whole site.`
+      : "";
     jobs.push([
       "traffic",
-      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics sessions attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}\nPeriod: ${prevLabel} versus ${d.period.label}${trafficWhat}${d.traffic.previous ? "" : none("traffic")}\nData: ${JSON.stringify({ comparison: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_sessions = Google Analytics' own AI Assistant channel. referral_ai_sessions and unassigned_ai_sessions = sessions in those channels whose source names a known AI platform. measured_ai_total = the three added together. all_sessions = every session to the site. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${caveatNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
+      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics sessions attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}${fromCountry}\nPeriod: ${prevLabel} versus ${d.period.label}${trafficWhat}${d.traffic.previous ? "" : none("traffic")}\nData: ${JSON.stringify({ comparison: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_sessions = Google Analytics' own AI Assistant channel. referral_ai_sessions and unassigned_ai_sessions = sessions in those channels whose source names a known AI platform. measured_ai_total = the three added together. all_sessions = every session to the site${d.traffic.country ? " from that country" : ""}. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${caveatNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
     ]);
   }
 
@@ -1138,7 +1162,8 @@ export async function generateMonthlyReport(
       if (typeof one === "string") return { ok: false, reason: one };
       if (one.scorecard.current.checks === 0) continue;
       const withLabel = { ...one, location: { key, label: labelOf(key)! } };
-      chapters.push({ key, label: labelOf(key)!, data: withLabel, takeaways: await writeTakeaways(withLabel) });
+      // A chapter's traffic shows only in Locations at a Glance, so it gets no traffic takeaway.
+      chapters.push({ key, label: labelOf(key)!, data: withLabel, takeaways: await writeTakeaways(withLabel, ANSWER_TAKEAWAYS) });
     }
     data = { ...whole, byLocation: chapters };
     takeaways = await writeTakeaways(whole, ["traffic"]);

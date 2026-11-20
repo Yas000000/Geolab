@@ -47,6 +47,7 @@ model Client {
   analyticsSnapshots      AnalyticsSnapshot[]
   searchConsoleSnapshots  SearchConsoleSnapshot[]
   aiTrafficSnapshots      AiTrafficSnapshot[]
+  countryTrafficSnapshots CountryTrafficSnapshot[]
   benchmarkSnapshots      BenchmarkSnapshot[]
   crawlChecks             CrawlCheck[]
   monthlyReports          MonthlyReport[]
@@ -369,6 +370,32 @@ model AiTrafficSnapshot {
 
   @@unique([clientId, date])
   @@index([clientId])
+}
+
+// The same daily GA4 figures (AnalyticsSnapshot + AiTrafficSnapshot) for one
+// country, pulled only for the countries of a client's locations (MacuMira:
+// CA, AU, NZ) -- the Traffic tab and reports show each location's own
+// traffic from these. `country` is GA4's countryId (ISO 3166-1 alpha-2, same
+// as ClientLocation.country). A day with no visits from that country has no row.
+model CountryTrafficSnapshot {
+  id                    String   @id @default(cuid())
+  clientId              String
+  client                Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date                  DateTime
+  country               String
+  sessions              Int?
+  activeUsers           Int?
+  keyEvents             Int?
+  directSessions        Int?
+  aiAssistantSessions   Int?
+  referralSessions      Int?
+  referralAiSessions    Int?
+  unassignedSessions    Int?
+  unassignedAiSessions  Int?
+  createdAt             DateTime @default(now())
+
+  @@unique([clientId, date, country])
+  @@index([clientId, country])
 }
 
 // A brand tracked for a client -- either the client's own brand
