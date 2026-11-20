@@ -11,9 +11,8 @@ export interface SessionCountPoint {
 
 // Drawn at the card's real width (useChartWidth), so it fills the card on a wide
 // page instead of a fixed 400px drawing centered in it.
-const HEIGHT = 120;
+const DEFAULT_HEIGHT = 120;
 const PADDING = { top: 12, right: 8, bottom: 20, left: 8 };
-const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;
 
 /**
  * Sibling to VisibilityTrendChart, not a generalized version of it --
@@ -22,10 +21,19 @@ const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;
  * SVG pattern (hover tooltip, area fill, rounded line), dynamic y-max and
  * toLocaleString() formatting instead.
  */
-export function SessionCountSparkline({ points, color = "#2563eb" }: { points: SessionCountPoint[]; color?: string }) {
+export function SessionCountSparkline({
+  points,
+  color = "#2563eb",
+  height: HEIGHT = DEFAULT_HEIGHT,
+}: {
+  points: SessionCountPoint[];
+  color?: string;
+  height?: number;
+}) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [ref, WIDTH] = useChartWidth(400);
   const INNER_WIDTH = WIDTH - PADDING.left - PADDING.right;
+  const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;
 
   if (points.length === 0) {
     return (

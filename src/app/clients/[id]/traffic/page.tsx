@@ -425,69 +425,91 @@ function TrafficSections({ view, prev: p, where }: { view: TrafficView; prev: To
     <>
       <section>
         <h2 className={`mb-1 ${sectionTitle}`}>AI Platform Traffic</h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-          Does not include Google AI Overviews/AI Mode (Organic) -- no reliable way to separate that from regular organic
-          search currently exists.
+        <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+          Doesn&apos;t include Google&apos;s AI Overviews or AI Mode: Google counts those visits as ordinary organic search,
+          and there&apos;s no reliable way to separate them.
         </p>
         {view.length === 0 ? (
           <div className={emptyBox}>No AI traffic data{from} in this range.</div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className={card}>
-              <div className={cardLabel}>AI Assistant</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                {t.aiAssistant.toLocaleString()}
-              </div>
-              <Change cur={t.aiAssistant} prev={p?.aiAssistant} />
-              <div className="mt-2">
-                <SessionCountSparkline points={sparklineForAi("aiAssistantSessions")} />
-              </div>
-            </div>
-
-            <div className={card}>
-              <div className={cardLabel}>Referral (AI)</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                {t.referralAi.toLocaleString()}
-              </div>
-              <Change cur={t.referralAi} prev={p?.referralAi} />
-              <div className="mt-2">
-                <SessionCountSparkline points={sparklineForAi("referralAiSessions")} color="#7c3aed" />
-              </div>
-            </div>
-
-            <div className={card}>
-              <div className={cardLabel}>Unassigned (AI)</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                {t.unassignedAi.toLocaleString()}
-              </div>
-              <Change cur={t.unassignedAi} prev={p?.unassignedAi} />
-              <div className="mt-2">
-                <SessionCountSparkline points={sparklineForAi("unassignedAiSessions")} color="#d97706" />
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900/40">
-              <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Direct
-                <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold normal-case tracking-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                  estimated
-                </span>
-              </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                ~{t.directAiEstimate.mid.toLocaleString()}
-              </div>
-              <Change cur={t.directAiEstimate.mid} prev={p?.directAiEstimate.mid} approx />
-              <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                {t.directAiEstimate.low.toLocaleString()}–{t.directAiEstimate.high.toLocaleString()} range (21–47% of{" "}
-                {t.direct.toLocaleString()} Direct sessions)
-              </div>
-              <div className="mt-2">
-                <SessionCountSparkline points={sparklineForAi("directSessions")} color="#71717a" />
-              </div>
-            </div>
+          // Two per row, each with what it counts (user, 2026-11-20: four across was too small).
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <AiCard
+              label="AI Assistant"
+              description="Visits Google Analytics puts in its own AI Assistant channel: people clicking a link in an AI chat assistant such as ChatGPT or Gemini."
+              value={t.aiAssistant.toLocaleString()}
+              change={<Change cur={t.aiAssistant} prev={p?.aiAssistant} />}
+              chart={<SessionCountSparkline points={sparklineForAi("aiAssistantSessions")} height={150} />}
+            />
+            <AiCard
+              label="Referral (AI)"
+              description="Visits Google Analytics files as referrals from an AI platform its AI Assistant channel doesn't recognize, such as Perplexity."
+              value={t.referralAi.toLocaleString()}
+              change={<Change cur={t.referralAi} prev={p?.referralAi} />}
+              chart={<SessionCountSparkline points={sparklineForAi("referralAiSessions")} color="#7c3aed" height={150} />}
+            />
+            <AiCard
+              label="Unassigned (AI)"
+              description="Visits Google Analytics couldn't place in any channel, but whose tracking tags name an AI platform."
+              value={t.unassignedAi.toLocaleString()}
+              change={<Change cur={t.unassignedAi} prev={p?.unassignedAi} />}
+              chart={<SessionCountSparkline points={sparklineForAi("unassignedAiSessions")} color="#d97706" height={150} />}
+            />
+            <AiCard
+              estimated
+              label="Direct"
+              description="Visits that arrive with no record of where they came from. AI apps often open links this way, so some of these came from AI but can't be measured. Research puts 21% to 47% of Direct visits as AI-referred; the figure shown uses the middle of that range and is an estimate, not a measurement."
+              value={`~${t.directAiEstimate.mid.toLocaleString()}`}
+              change={<Change cur={t.directAiEstimate.mid} prev={p?.directAiEstimate.mid} approx />}
+              note={`${t.directAiEstimate.low.toLocaleString()} to ${t.directAiEstimate.high.toLocaleString()} of ${t.direct.toLocaleString()} Direct visits. The chart shows all Direct visits per day.`}
+              chart={<SessionCountSparkline points={sparklineForAi("directSessions")} color="#71717a" height={150} />}
+            />
           </div>
         )}
       </section>
     </>
+  );
+}
+
+/** One of the four AI Platform Traffic boxes: what it counts, its total, its change and its daily chart. */
+function AiCard({
+  label,
+  description,
+  value,
+  change,
+  note,
+  chart,
+  estimated,
+}: {
+  label: string;
+  description: string;
+  value: string;
+  change: React.ReactNode;
+  note?: string;
+  chart: React.ReactNode;
+  estimated?: boolean;
+}) {
+  return (
+    <div
+      className={
+        estimated
+          ? "min-w-0 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-5 py-4 dark:border-zinc-700 dark:bg-zinc-900/40"
+          : "min-w-0 rounded-lg border border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950"
+      }
+    >
+      <div className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+        {label}
+        {estimated && (
+          <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            estimated
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-sm leading-snug text-zinc-500 dark:text-zinc-400">{description}</p>
+      <div className="mt-3 text-4xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">{value}</div>
+      {change}
+      {note && <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{note}</div>}
+      <div className="mt-3">{chart}</div>
+    </div>
   );
 }
