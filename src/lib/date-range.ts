@@ -187,9 +187,13 @@ export function formatDisplayDate(d: Date, utc = false): string {
 /**
  * The "All Time" span for a client: from its first GEO data point -- its
  * earliest complete run or imported benchmark, whichever is earlier -- to
- * now. Shared by the Rankings and Traffic pages so "All Time" means the
- * same period on both (Traffic's GA4 history can reach back years before
- * GEO tracking started; it stays reachable via a custom range).
+ * today. Shared by the Rankings, Citations and Traffic pages so "All Time"
+ * means the same period on all of them (Traffic's GA4 history can reach back
+ * years before GEO tracking started; it stays reachable via a custom range).
+ *
+ * Both ends are whole days (the end is today's midnight, not "now"), so
+ * "Compare To: Last Period" on All Time is the same number of days, on the
+ * page and in the picker's "vs." line alike.
  *
  * run.startedAt is a real moment-in-time (truncate in LOCAL terms, matching
  * the pages' local-day window convention); benchmark snapshotDate is a
@@ -201,5 +205,5 @@ export function geoAllTimeRange(runStarts: Date[], benchmarkDates: Date[]): Date
   const localCalendarDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const utcCalendarDay = (d: Date) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
   const starts = [...runStarts.map(localCalendarDay), ...benchmarkDates.map(utcCalendarDay)];
-  return starts.length ? { start: new Date(Math.min(...starts)), end: new Date() } : null;
+  return starts.length ? { start: new Date(Math.min(...starts)), end: startOfDay(new Date()) } : null;
 }

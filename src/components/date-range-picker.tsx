@@ -330,7 +330,10 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
           )}
           {resolvedCompareRange && (
             <div className="text-zinc-400 dark:text-zinc-600">
-              vs. {formatDisplayDate(resolvedCompareRange.start)} – {formatDisplayDate(resolvedCompareRange.end)}
+              {/* Derived from the server-provided All Time span unless it's a custom range from the URL,
+                  so it's pinned to UTC like the primary dates above (the day the server compares). */}
+              vs. {formatDisplayDate(resolvedCompareRange.start, primaryRangeIsServerProvided && appliedCompareMode !== "custom")} –{" "}
+              {formatDisplayDate(resolvedCompareRange.end, primaryRangeIsServerProvided && appliedCompareMode !== "custom")}
             </div>
           )}
         </div>

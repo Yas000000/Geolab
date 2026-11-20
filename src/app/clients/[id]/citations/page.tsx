@@ -143,7 +143,6 @@ export default async function ClientCitationsPage({
     compareStartParam && compareEndParam
       ? { start: parseISODate(compareStartParam), end: parseISODate(compareEndParam) }
       : null;
-  const comparisonRange = resolveComparisonRange(dateRange, compareMode, customCompareRange);
 
   const client = await getClient(id);
   if (!client) notFound();
@@ -166,6 +165,9 @@ export default async function ClientCitationsPage({
     client.runs.map((r) => r.startedAt),
     client.benchmarkSnapshots.map((s) => s.snapshotDate),
   );
+  // On All Time, "Compare To" resolves against the All Time span itself -- the dates the
+  // picker prints as "vs. ..." -- so Last Period / Last Year falls before the first crawl.
+  const comparisonRange = resolveComparisonRange(dateRange ?? allTimeRange, compareMode, customCompareRange);
   const platformsAvailable = Array.from(
     new Set(citationTrackedRuns(client.runs).flatMap((run) => run.rawResponses.map((r) => r.platform))),
   ).sort();
@@ -338,7 +340,11 @@ export default async function ClientCitationsPage({
             <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
               The sites AI answers link to as sources for this client&apos;s prompts. Share is the % of answers that
               cite the site at least once.
-              {comparison ? " Change is vs. the comparison period." : " Pick a \"Compare To\" period to see Change."}
+              {comparison
+                ? " Change is vs. the comparison period."
+                : comparisonRange
+                  ? " No Live Search answers fall in the selected Compare To period, so Change is blank."
+                  : " Pick a \"Compare To\" period to see Change."}
             </p>
             <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
               <table className="w-full text-sm">

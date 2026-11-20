@@ -671,10 +671,18 @@ export default async function ClientRankingsPage({
     compareStartParam && compareEndParam
       ? { start: parseISODate(compareStartParam), end: parseISODate(compareEndParam) }
       : null;
-  const comparisonRange = resolveComparisonRange(dateRange, compareMode, customCompareRange);
 
   const client = await getClient(id);
   if (!client) notFound();
+
+  // On All Time, "Compare To" resolves against the All Time span itself -- the dates the
+  // picker prints as "vs. ..." (same span as buildDashboardData's allTimeRange). Last Period
+  // or Last Year then falls before the first crawl, so the page says it has no crawls.
+  const allTimeRange = geoAllTimeRange(
+    client.runs.filter((r) => r.status === "COMPLETE").map((r) => r.startedAt),
+    client.benchmarkSnapshots.map((s) => s.snapshotDate),
+  );
+  const comparisonRange = resolveComparisonRange(dateRange ?? allTimeRange, compareMode, customCompareRange);
 
   // The dropdown's entries: the client's locations, plus "No location" when it has
   // answers searched with none. URL value: the location's id, or "none".
