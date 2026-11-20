@@ -17,9 +17,11 @@ async function getClient(id: string) {
       id: true,
       name: true,
       domain: true,
-      analyticsSnapshots: { orderBy: { date: "asc" } },
-      // Search Console is still pulled daily (Settings picks the site) but is left off
-      // this page for now, at the user's request (2026-11-19).
+      // GA4 sessions/active users are still pulled daily but not shown here: the user took
+      // them off this page (2026-11-20, "those are just going to confuse people"). Their days
+      // still set the All Time fallback and the days a location's chart is zero-filled on.
+      // Search Console is also pulled daily but left off, at the user's request (2026-11-19).
+      analyticsSnapshots: { orderBy: { date: "asc" }, select: { date: true } },
       aiTrafficSnapshots: { orderBy: { date: "asc" } },
       // Each location's own traffic: GA4 visits from its country (pulled for location countries only).
       locations: { orderBy: { position: "asc" }, select: { id: true, label: true, country: true, city: true } },
@@ -33,24 +35,13 @@ async function getClient(id: string) {
 
 type ClientData = NonNullable<Awaited<ReturnType<typeof getClient>>>;
 
-/** One day of GA4 totals. */
-interface Ga4Day {
-  id: string;
-  date: Date;
-  sessions: number | null;
-  activeUsers: number | null;
-}
-
 type AiField = "aiAssistantSessions" | "referralAiSessions" | "unassignedAiSessions" | "directSessions";
 
 /** One day of the AI traffic breakdown. */
 type AiDay = { id: string; date: Date } & Record<AiField, number | null>;
 
 /** The days a view draws from: the whole site, or one location's country. */
-interface TrafficView {
-  ga4: Ga4Day[];
-  ai: AiDay[];
-}
+type TrafficView = AiDay[];
 
 function inDateWindow(date: Date, range: DateRange | null): boolean {
   if (!range) return true;
@@ -63,10 +54,7 @@ function dateLabel(d: Date) {
 }
 
 function wholeSite(client: ClientData, range: DateRange | null): TrafficView {
-  return {
-    ga4: client.analyticsSnapshots.filter((s) => inDateWindow(s.date, range)),
-    ai: client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, range)),
-  };
+  return client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, range));
 }
 
 /**
@@ -77,37 +65,32 @@ function wholeSite(client: ClientData, range: DateRange | null): TrafficView {
  */
 function countryView(client: ClientData, country: string, range: DateRange | null): TrafficView {
   const rows = client.countryTrafficSnapshots.filter((s) => s.country === country && inDateWindow(s.date, range));
-  if (!rows.length) return { ga4: [], ai: [] };
+  if (!rows.length) return [];
   const byDay = new Map(rows.map((r) => [r.date.getTime(), r]));
-  const days = [
-    ...new Set([...client.analyticsSnapshots.filter((s) => inDateWindow(s.date, range)).map((s) => s.date.getTime()), ...byDay.keys()]),
-  ].sort((a, b) => a - b);
-  const filled: (Ga4Day & AiDay)[] = days.map(
+  const siteDays = [...client.analyticsSnapshots, ...client.aiTrafficSnapshots]
+    .filter((s) => inDateWindow(s.date, range))
+    .map((s) => s.date.getTime());
+  const days = [...new Set([...siteDays, ...byDay.keys()])].sort((a, b) => a - b);
+  return days.map(
     (t) =>
       byDay.get(t) ?? {
         id: `${country}-${t}`,
         date: new Date(t),
-        sessions: 0,
-        activeUsers: 0,
         directSessions: 0,
         aiAssistantSessions: 0,
         referralAiSessions: 0,
         unassignedAiSessions: 0,
       },
   );
-  return { ga4: filled, ai: filled };
 }
 
 function totals(view: TrafficView) {
-  const sumGa4 = (field: "sessions" | "activeUsers") => view.ga4.reduce((acc, s) => acc + (s[field] ?? 0), 0);
-  const sumAi = (field: AiField) => view.ai.reduce((acc, s) => acc + (s[field] ?? 0), 0);
+  const sumAi = (field: AiField) => view.reduce((acc, s) => acc + (s[field] ?? 0), 0);
   const aiAssistant = sumAi("aiAssistantSessions");
   const referralAi = sumAi("referralAiSessions");
   const unassignedAi = sumAi("unassignedAiSessions");
   const direct = sumAi("directSessions");
   return {
-    sessions: sumGa4("sessions"),
-    activeUsers: sumGa4("activeUsers"),
     aiAssistant,
     referralAi,
     unassignedAi,
@@ -167,7 +150,7 @@ export default async function ClientTrafficPage({
   const locationParam = typeof sp.location === "string" ? sp.location : "";
   const selected = client.locations.find((l) => l.id === locationParam) ?? null;
   const site = wholeSite(client, windowRange);
-  const noSiteData = site.ga4.length === 0 && site.ai.length === 0;
+  const noSiteData = site.length === 0;
 
   const notConnected =
     viewer.role === "TEAM" ? (
@@ -221,7 +204,7 @@ export default async function ClientTrafficPage({
             }))}
           />
           <h2 className="mt-10 mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">Whole Site</h2>
-          <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">Every visit, from every country.</p>
+          <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">AI platform visits from every country.</p>
           <TrafficSections view={site} />
         </>
       ) : (
@@ -242,11 +225,11 @@ function TrafficByLocation({
 }) {
   return (
     <section className="mb-2">
-      <h2 className={`mb-3 ${sectionTitle}`}>Traffic by Location</h2>
+      <h2 className={`mb-3 ${sectionTitle}`}>AI Traffic by Location</h2>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {views.map((v) => {
           const t = totals(v.view);
-          const empty = v.view.ga4.length === 0;
+          const empty = v.view.length === 0;
           return (
             <div key={v.key} className={`${card} min-w-0`}>
               <div className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</div>
@@ -256,17 +239,21 @@ function TrafficByLocation({
                 </p>
               ) : (
                 <>
-                  <div className={cardLabel}>Sessions</div>
+                  <div className={cardLabel}>Measured AI Visits</div>
                   <div className="mt-1 text-3xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                    {t.sessions.toLocaleString()}
+                    {t.measuredAi.toLocaleString()}
                   </div>
                   <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                    {t.activeUsers.toLocaleString()} active users · visits from {countryName(v.country)}
+                    Visits from {countryName(v.country)}
                     {v.city ? " (whole country)" : ""}
                   </div>
                   <div className="mt-2">
                     <SessionCountSparkline
-                      points={v.view.ga4.map((s) => ({ key: s.id, dateLabel: dateLabel(s.date), value: s.sessions ?? 0 }))}
+                      points={v.view.map((s) => ({
+                        key: s.id,
+                        dateLabel: dateLabel(s.date),
+                        value: (s.aiAssistantSessions ?? 0) + (s.referralAiSessions ?? 0) + (s.unassignedAiSessions ?? 0),
+                      }))}
                     />
                   </div>
                   <table className="mt-3 w-full text-sm">
@@ -274,7 +261,6 @@ function TrafficByLocation({
                       <AiRow label="AI Assistant" value={t.aiAssistant} />
                       <AiRow label="Referral (AI)" value={t.referralAi} />
                       <AiRow label="Unassigned (AI)" value={t.unassignedAi} />
-                      <AiRow label="Measured AI visits" value={t.measuredAi} strong />
                       <tr>
                         <td className="py-1.5 text-zinc-600 dark:text-zinc-400">
                           Direct{" "}
@@ -303,61 +289,31 @@ function TrafficByLocation({
   );
 }
 
-function AiRow({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+function AiRow({ label, value }: { label: string; value: number }) {
   return (
     <tr>
-      <td className={`py-1.5 ${strong ? "font-medium text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"}`}>{label}</td>
-      <td className={`py-1.5 text-right tabular-nums ${strong ? "font-semibold" : ""} text-zinc-900 dark:text-zinc-100`}>
-        {value.toLocaleString()}
-      </td>
+      <td className="py-1.5 text-zinc-600 dark:text-zinc-400">{label}</td>
+      <td className="py-1.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{value.toLocaleString()}</td>
     </tr>
   );
 }
 
-/** The Google Analytics and AI Platform Traffic sections, for the whole site or one location's country. */
+/** The AI Platform Traffic section, for the whole site or one location's country. */
 function TrafficSections({ view, where }: { view: TrafficView; where?: string }) {
   const t = totals(view);
-  const trend = (field: "sessions" | "activeUsers"): SessionCountPoint[] =>
-    view.ga4.map((s) => ({ key: s.id, dateLabel: dateLabel(s.date), value: s[field] ?? 0 }));
   const sparklineForAi = (field: AiField): SessionCountPoint[] =>
-    view.ai.map((s) => ({ key: s.id, dateLabel: dateLabel(s.date), value: s[field] ?? 0 }));
+    view.map((s) => ({ key: s.id, dateLabel: dateLabel(s.date), value: s[field] ?? 0 }));
   const from = where ? ` from ${where}` : "";
 
   return (
     <>
-      <section className="mb-8">
-        <h2 className={`mb-3 ${sectionTitle}`}>Google Analytics</h2>
-        {view.ga4.length === 0 ? (
-          <div className={emptyBox}>No GA4 data{from} in this range.</div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className={card}>
-              <div className={cardLabel}>Sessions</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">{t.sessions.toLocaleString()}</div>
-              <div className="mt-2">
-                <SessionCountSparkline points={trend("sessions")} />
-              </div>
-            </div>
-            <div className={card}>
-              <div className={cardLabel}>Active Users</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                {t.activeUsers.toLocaleString()}
-              </div>
-              <div className="mt-2">
-                <SessionCountSparkline points={trend("activeUsers")} color="#2563eb" />
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
       <section>
         <h2 className={`mb-1 ${sectionTitle}`}>AI Platform Traffic</h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
           Does not include Google AI Overviews/AI Mode (Organic) -- no reliable way to separate that from regular organic
           search currently exists.
         </p>
-        {view.ai.length === 0 ? (
+        {view.length === 0 ? (
           <div className={emptyBox}>No AI traffic data{from} in this range.</div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

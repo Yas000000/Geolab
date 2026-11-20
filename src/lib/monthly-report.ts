@@ -88,7 +88,8 @@ export interface CitationSection {
 }
 
 export interface TrafficTotals {
-  sessions: number | null;
+  // All-site sessions were dropped from reports at the user's request (2026-11-20: "Those are
+  // just going to confuse people"). Reports saved before then still carry `sessions`; ignored.
   aiAssistant: number;
   referralAi: number;
   unassignedAi: number;
@@ -551,7 +552,7 @@ async function trafficTotals(clientId: string, period: ReportPeriod, country?: s
   const b = periodBounds(period);
   const where = { clientId, date: { gte: b.start, lt: b.end } };
   const [siteGa4, siteAi] = await Promise.all([
-    prisma.analyticsSnapshot.findMany({ where, select: { sessions: true } }),
+    prisma.analyticsSnapshot.findMany({ where, select: { date: true } }),
     prisma.aiTrafficSnapshot.findMany({ where }),
   ]);
   if (!siteGa4.length && !siteAi.length) return null;
@@ -565,7 +566,6 @@ async function trafficTotals(clientId: string, period: ReportPeriod, country?: s
   const direct = sum(ai, (r) => r.directSessions);
   const est = estimateDirectAiSessions(direct);
   return {
-    sessions: countryRows ? sum(countryRows, (r) => r.sessions) : siteGa4.length ? sum(siteGa4, (r) => r.sessions) : null,
     aiAssistant,
     referralAi,
     unassignedAi,
@@ -1089,11 +1089,10 @@ export async function writeTakeaways(d: MonthlyReportData, only?: (keyof ReportT
   if (d.traffic) {
     const t = (x: TrafficTotals | null) =>
       x && {
-        ai_assistant_sessions: x.aiAssistant,
-        referral_ai_sessions: x.referralAi,
-        unassigned_ai_sessions: x.unassignedAi,
+        ai_assistant_visits: x.aiAssistant,
+        referral_ai_visits: x.referralAi,
+        unassigned_ai_visits: x.unassignedAi,
         measured_ai_total: x.measuredAiTotal,
-        all_sessions: x.sessions,
         days_with_data: x.days,
         days_in_period: x.daysInPeriod,
       };
@@ -1108,7 +1107,7 @@ export async function writeTakeaways(d: MonthlyReportData, only?: (keyof ReportT
       : "";
     jobs.push([
       "traffic",
-      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics sessions attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}${fromCountry}\nPeriod: ${prevLabel} versus ${d.period.label}${trafficWhat}${d.traffic.previous ? "" : none("traffic")}\nData: ${JSON.stringify({ comparison: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_sessions = Google Analytics' own AI Assistant channel. referral_ai_sessions and unassigned_ai_sessions = sessions in those channels whose source names a known AI platform. measured_ai_total = the three added together. all_sessions = every session to the site${d.traffic.country ? " from that country" : ""}. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${caveatNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
+      `${STYLE}\n\nSection: AI Platform Traffic (Google Analytics visits attributed to AI platforms. This is real site traffic, separate from whether ${brand} was mentioned in AI answers)\nBrand: ${brand}${fromCountry}\nPeriod: ${prevLabel} versus ${d.period.label}${trafficWhat}${d.traffic.previous ? "" : none("traffic")}\nData: ${JSON.stringify({ comparison: t(d.traffic.previous), current: t(d.traffic.current) })}\n\nField meanings: ai_assistant_visits = Google Analytics' own AI Assistant channel. referral_ai_visits and unassigned_ai_visits = visits in those channels whose source names a known AI platform. measured_ai_total = the three added together. Never mention the site's total sessions, visits or users. Google's AI Overviews are not covered by any of these numbers. Do not claim this is the complete picture of AI traffic.${caveatNote}\n\nWrite the Key Takeaway sentence now, describing what this traffic shows.`,
     ]);
   }
 

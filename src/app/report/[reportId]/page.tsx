@@ -640,7 +640,6 @@ function answerSections({
 
 /** All locations: each location's headline figures side by side, before their chapters. */
 const TRAFFIC_AI_LABEL = "Measured AI Visits";
-const TRAFFIC_SESSIONS_LABEL = "Website Sessions";
 
 function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n: number } }) {
   const chapters = d.byLocation ?? [];
@@ -657,12 +656,7 @@ function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n
     const tr = l.data.traffic?.country ? l.data.traffic : null;
     const trPrev = tr?.previous ?? null;
     const comparable = !!tr && !!trPrev && !trafficCaveat(tr, l.data.period.label, l.data.compare.trafficPeriod?.label ?? l.data.compare.label);
-    const visits = (label: string, cur: number | null, prev: number | null | undefined) => ({
-      label,
-      value: fmtInt(cur),
-      prev: trPrev ? fmtInt(prev ?? null) : null,
-      diff: comparable ? change(cur, prev, "count") : null,
-    });
+    // Website sessions were taken off this table at the user's request (2026-11-20).
     return [
       ...cards,
       ...(cit
@@ -670,8 +664,12 @@ function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n
         : []),
       ...(tr
         ? [
-            visits(TRAFFIC_AI_LABEL, tr.current.measuredAiTotal, trPrev?.measuredAiTotal),
-            visits(TRAFFIC_SESSIONS_LABEL, tr.current.sessions, trPrev?.sessions),
+            {
+              label: TRAFFIC_AI_LABEL,
+              value: fmtInt(tr.current.measuredAiTotal),
+              prev: trPrev ? fmtInt(trPrev.measuredAiTotal) : null,
+              diff: comparable ? change(tr.current.measuredAiTotal, trPrev?.measuredAiTotal, "count") : null,
+            },
           ]
         : []),
     ];
@@ -735,9 +733,8 @@ function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n
         {hasTraffic && (
           <>
             {" "}
-            Measured AI visits and website sessions are Google Analytics visits from each location&apos;s country, compared with
-            the same days as the AI Platform Traffic section. Measured AI visits are the AI Assistant channel plus referral and
-            unassigned visits from AI platforms.
+            Measured AI visits are Google Analytics visits from each location&apos;s country, compared with the same days as the
+            AI Platform Traffic section: the AI Assistant channel plus referral and unassigned visits from AI platforms.
           </>
         )}
       </p>
@@ -845,11 +842,6 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                   <TrafficRow label="Referrals from AI platforms" cur={d.traffic.current.referralAi} prev={prevTraffic?.referralAi} />
                   <TrafficRow label="Unassigned visits from AI platforms" cur={d.traffic.current.unassignedAi} prev={prevTraffic?.unassignedAi} />
                   <TrafficRow label="Measured AI visits, total" cur={d.traffic.current.measuredAiTotal} prev={prevTraffic?.measuredAiTotal} />
-                  <TrafficRow
-                    label={d.traffic.country ? `All website sessions from ${countryName(d.traffic.country)}` : "All website sessions"}
-                    cur={d.traffic.current.sessions}
-                    prev={prevTraffic?.sessions}
-                  />
                 </tbody>
               </Table>
               {(isBenchmark || c.kind === "firstCrawl") && c.trafficPeriod && (
