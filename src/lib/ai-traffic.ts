@@ -50,7 +50,12 @@ function matchesAiPlatform(value: string | null | undefined): boolean {
  * (Direct/AI Assistant/Referral/Unassigned, confirmed live to be real enum
  * values returned by sessionDefaultChannelGroup -- an earlier doc summary
  * wrongly claimed they weren't), then a drill-down into Referral's sources
- * and Unassigned's mediums to find the AI-attributable subset of each.
+ * and Unassigned's sources + mediums to find the AI-attributable subset of
+ * each. Unassigned once matched the medium only, which found NOTHING for any
+ * client: checked live 2026-11-20, every AI visit in Unassigned names the
+ * platform in its source with medium "(not set)"/"(none)" (MacuMira
+ * openai + chatgpt.com, Yellowbrick gemini, Golden copilot.com, openai,
+ * perplexity) -- AI apps tag links with utm_source and no utm_medium.
  * Referral and Unassigned are catch-all buckets, not AI-specific --
  * live-verified on real data that most of their volume is NOT AI traffic
  * (SignUp: 0.0% of Referral, 0.07% of Unassigned), so the whole-bucket
@@ -152,7 +157,7 @@ export async function fetchAiTrafficDailySeries(
       const unassignedRows = await runReportAllRows(client, {
         property,
         dateRanges,
-        dimensions: [{ name: "date" }, { name: "sessionMedium" }],
+        dimensions: [{ name: "date" }, { name: "sessionSource" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }],
         dimensionFilter: {
           filter: {
@@ -162,7 +167,8 @@ export async function fetchAiTrafficDailySeries(
         },
       });
       for (const row of unassignedRows) {
-        if (matchesAiPlatform(row.dimensionValues?.[1]?.value)) {
+        // Source or medium: one row per source/medium pair, so a visit is never counted twice.
+        if (matchesAiPlatform(row.dimensionValues?.[1]?.value) || matchesAiPlatform(row.dimensionValues?.[2]?.value)) {
           const e = entry(day(row));
           e.unassignedAiSessions = (e.unassignedAiSessions ?? 0) + sessionsOf(row);
         }
@@ -278,23 +284,23 @@ export async function fetchCountryTrafficDailySeries(
       }
     }
 
-    // The AI share of Referral (by source) and Unassigned (by medium), as in fetchAiTrafficDailySeries.
-    const drillDowns: [string, string, "referralAiSessions" | "unassignedAiSessions"][] = [
-      ["Referral", "sessionSource", "referralAiSessions"],
-      ["Unassigned", "sessionMedium", "unassignedAiSessions"],
+    // The AI share of Referral (by source) and Unassigned (by source or medium), as in fetchAiTrafficDailySeries.
+    const drillDowns: [string, string[], "referralAiSessions" | "unassignedAiSessions"][] = [
+      ["Referral", ["sessionSource"], "referralAiSessions"],
+      ["Unassigned", ["sessionSource", "sessionMedium"], "unassignedAiSessions"],
     ];
-    for (const [channel, dimension, field] of drillDowns) {
+    for (const [channel, dimensions, field] of drillDowns) {
       const bucket = field === "referralAiSessions" ? "referralSessions" : "unassignedSessions";
       if (![...series.values()].some((e) => (e[bucket] ?? 0) > 0)) continue;
       const rows = await runReportAllRows(client, {
         property,
         dateRanges,
-        dimensions: [{ name: "date" }, { name: "countryId" }, { name: dimension }],
+        dimensions: [{ name: "date" }, { name: "countryId" }, ...dimensions.map((name) => ({ name }))],
         metrics: [{ name: "sessions" }],
         dimensionFilter: inChannel(channel),
       });
       for (const row of rows) {
-        if (matchesAiPlatform(row.dimensionValues?.[2]?.value)) {
+        if ((row.dimensionValues ?? []).slice(2).some((v) => matchesAiPlatform(v?.value))) {
           const e = entry(keyOf(row));
           e[field] = (e[field] ?? 0) + sessionsOf(row);
         }
