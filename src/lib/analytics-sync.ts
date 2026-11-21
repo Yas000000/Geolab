@@ -43,7 +43,6 @@ export interface AnalyticsSyncResult {
   ga4Days: number;
   aiDays: number;
   gscDays: number;
-  countryDays: number; // day x country rows, for the countries of the client's locations
 }
 
 /** The distinct countries of a client's locations (MacuMira: CA, AU, NZ), in location order. */
@@ -56,6 +55,11 @@ export async function locationCountries(clientId: string): Promise<string[]> {
  * GA4 traffic per country for the countries of the client's locations,
  * upserted one row per day per country. Nothing to do for a client with no
  * locations or no GA4 property. Throws on any Google API error, like the rest.
+ *
+ * PAUSED 2026-11-20: nothing calls this or importCountryHistoryForClient. The user took
+ * per-location traffic off the Traffic tab and reports, then asked to stop the pull. The
+ * CountryTrafficSnapshot table and its rows (up to 2026-11-19) are kept so it can come back:
+ * re-add the call in syncClientAnalytics and the after() calls in the two location routes.
  */
 export async function syncCountryTraffic(
   oauthClient: OAuth2Client,
@@ -94,7 +98,7 @@ export async function syncClientAnalytics(
   client: { id: string; ga4PropertyId: string | null; gscSiteUrl: string | null },
   range: { ga4Start: Date; gscStart: Date; end: Date },
 ): Promise<AnalyticsSyncResult> {
-  const result: AnalyticsSyncResult = { ga4Days: 0, aiDays: 0, gscDays: 0, countryDays: 0 };
+  const result: AnalyticsSyncResult = { ga4Days: 0, aiDays: 0, gscDays: 0 };
   const clientId = client.id;
   const { ga4Start, gscStart, end: endDate } = range;
 
@@ -124,8 +128,6 @@ export async function syncClientAnalytics(
       }),
     );
     result.aiDays = ai.size;
-
-    result.countryDays = await syncCountryTraffic(oauthClient, client, { start: ga4Start, end: endDate });
   }
 
   if (client.gscSiteUrl) {

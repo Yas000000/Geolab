@@ -1,14 +1,10 @@
-import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTeam } from "@/lib/viewer";
 import { cleanLocation, type LocationInput } from "@/lib/client-locations";
 import { getTrackedPromptSet, saveTrackedPrompts } from "@/lib/tracked-prompts";
-import { importCountryHistoryForClient } from "@/lib/analytics-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Long enough for the after() import of the new country's Google Analytics history.
-export const maxDuration = 800;
 
 /**
  * Settings > Locations: adds a place the client is tracked in. With
@@ -41,7 +37,5 @@ export async function POST(request: Request, ctx: RouteContext<"/api/clients/[id
       );
     }
   }
-  // Its country's traffic history for the Traffic tab (a country another location already has is just re-pulled).
-  after(importCountryHistoryForClient(id));
   return Response.json({ location }, { status: 201 });
 }
