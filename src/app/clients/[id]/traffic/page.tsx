@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { DateRangePicker } from "@/components/date-range-picker";
-import { LocationFilter } from "@/components/location-filter";
 import { SessionCountSparkline, type SessionCountPoint } from "@/components/session-count-sparkline";
 import {
   formatDisplayDate,
@@ -12,7 +11,6 @@ import {
   type DateRange,
 } from "@/lib/date-range";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
-import { countryName } from "@/lib/client-locations";
 import { requireTab } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
@@ -26,13 +24,12 @@ async function getClient(id: string) {
       domain: true,
       // GA4 sessions/active users are still pulled daily but not shown here: the user took
       // them off this page (2026-11-20, "those are just going to confuse people"). Their days
-      // still set the All Time fallback and the days a location's chart is zero-filled on.
+      // still set the All Time fallback and count as days with data in comparisons.
       // Search Console is also pulled daily but left off, at the user's request (2026-11-19).
       analyticsSnapshots: { orderBy: { date: "asc" }, select: { date: true } },
       aiTrafficSnapshots: { orderBy: { date: "asc" } },
-      // Each location's own traffic: GA4 visits from its country (pulled for location countries only).
-      locations: { orderBy: { position: "asc" }, select: { id: true, label: true, country: true, city: true } },
-      countryTrafficSnapshots: { orderBy: { date: "asc" } },
+      // No location split on this tab: the user took it off (2026-11-20). Country traffic is
+      // still pulled daily for clients with locations, for their reports.
       // Only the earliest of each -- they define "All Time" (geoAllTimeRange).
       runs: { where: { status: "COMPLETE" }, orderBy: { startedAt: "asc" }, take: 1, select: { startedAt: true } },
       benchmarkSnapshots: { orderBy: { snapshotDate: "asc" }, take: 1, select: { snapshotDate: true } },
@@ -47,7 +44,7 @@ type AiField = "aiAssistantSessions" | "referralAiSessions" | "unassignedAiSessi
 /** One day of the AI traffic breakdown. */
 type AiDay = { id: string; date: Date } & Record<AiField, number | null>;
 
-/** The days a view draws from: the whole site, or one location's country. */
+/** The days the page draws from. */
 type TrafficView = AiDay[];
 
 function inDateWindow(date: Date, range: DateRange | null): boolean {
@@ -64,33 +61,6 @@ function wholeSite(client: ClientData, range: DateRange | null): TrafficView {
   return client.aiTrafficSnapshots.filter((s) => inDateWindow(s.date, range));
 }
 
-/**
- * A location's traffic: the property's visits from its country (one row per day has both
- * halves). A day with no visits from there has no row, so every day the whole site has data
- * is filled in with zeros: the charts keep the real timeline instead of joining up the days
- * that had visits (New Zealand has visits on about 1 day in 3).
- */
-function countryView(client: ClientData, country: string, range: DateRange | null): TrafficView {
-  const rows = client.countryTrafficSnapshots.filter((s) => s.country === country && inDateWindow(s.date, range));
-  if (!rows.length) return [];
-  const byDay = new Map(rows.map((r) => [r.date.getTime(), r]));
-  const siteDays = [...client.analyticsSnapshots, ...client.aiTrafficSnapshots]
-    .filter((s) => inDateWindow(s.date, range))
-    .map((s) => s.date.getTime());
-  const days = [...new Set([...siteDays, ...byDay.keys()])].sort((a, b) => a - b);
-  return days.map(
-    (t) =>
-      byDay.get(t) ?? {
-        id: `${country}-${t}`,
-        date: new Date(t),
-        directSessions: 0,
-        aiAssistantSessions: 0,
-        referralAiSessions: 0,
-        unassignedAiSessions: 0,
-      },
-  );
-}
-
 function dayStart(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -99,7 +69,7 @@ function rangeDays(range: DateRange): number {
   return Math.round((dayStart(range.end).getTime() - dayStart(range.start).getTime()) / 86_400_000) + 1;
 }
 
-/** Days in the range with any Google Analytics data for the site (a location's days are the site's). */
+/** Days in the range with any Google Analytics data for the site. */
 function siteDaysWithData(client: ClientData, range: DateRange): number {
   return new Set(
     [...client.analyticsSnapshots, ...client.aiTrafficSnapshots].filter((s) => inDateWindow(s.date, range)).map((s) => s.date.getTime()),
@@ -124,8 +94,6 @@ function totals(view: TrafficView) {
   };
 }
 
-const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
-const cardLabel = "text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
 const sectionTitle = "text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
 const emptyBox =
   "rounded-lg border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400";
@@ -171,11 +139,6 @@ export default async function ClientTrafficPage({
   const allTimeRange: DateRange | null = allTimeSpan && { start: dayStart(allTimeSpan.start), end: dayStart(allTimeSpan.end) };
   const windowRange = dateRange ?? allTimeRange;
 
-  // Location dropdown (clients tracked in several places): "All locations" shows each
-  // location's traffic side by side, then the whole site; one location filters the page to
-  // its country. Same entries as the other tabs, minus "No location" (traffic has no such thing).
-  const locationParam = typeof sp.location === "string" ? sp.location : "";
-  const selected = client.locations.find((l) => l.id === locationParam) ?? null;
   const site = wholeSite(client, windowRange);
   const noSiteData = site.length === 0;
 
@@ -197,8 +160,7 @@ export default async function ClientTrafficPage({
         }
       : null;
   const comparing = !!coverage && coverage.prev.data > 0 && !!comparisonRange;
-  const prevOf = (view: (range: DateRange) => TrafficView): Totals | null =>
-    comparing && comparisonRange ? totals(view(comparisonRange)) : null;
+  const prev: Totals | null = comparing && comparisonRange ? totals(wholeSite(client, comparisonRange)) : null;
 
   const notConnected =
     viewer.role === "TEAM" ? (
@@ -221,18 +183,9 @@ export default async function ClientTrafficPage({
           {client.domain && <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{client.domain}</p>}
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          {client.locations.length > 0 && <LocationFilter locations={client.locations.map((l) => ({ key: l.id, label: l.label }))} />}
           <DateRangePicker allTimeRange={allTimeRange} />
         </div>
       </header>
-
-      {selected && (
-        <p className="-mt-3 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Showing <span className="font-medium text-zinc-900 dark:text-zinc-100">{selected.label}</span> only: visits Google
-          Analytics places in {countryName(selected.country)}
-          {selected.city ? ` (the whole country; traffic isn't split by city)` : ""}, on every part of the site it tracks.
-        </p>
-      )}
 
       {!noSiteData && coverage && comparisonRange && (
         <p className="-mt-3 mb-4 text-xs text-zinc-500 dark:text-zinc-400">
@@ -262,129 +215,10 @@ export default async function ClientTrafficPage({
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
           {notConnected}
         </div>
-      ) : selected ? (
-        <TrafficSections
-          view={countryView(client, selected.country, windowRange)}
-          prev={prevOf((r) => countryView(client, selected.country, r))}
-          where={countryName(selected.country)}
-        />
-      ) : client.locations.length > 0 ? (
-        <>
-          <TrafficByLocation
-            views={client.locations.map((l) => ({
-              key: l.id,
-              label: l.label,
-              country: l.country,
-              city: l.city,
-              view: countryView(client, l.country, windowRange),
-              prev: prevOf((r) => countryView(client, l.country, r)),
-            }))}
-          />
-          <h2 className="mt-10 mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">Whole Site</h2>
-          <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">AI platform visits from every country.</p>
-          <TrafficSections view={site} prev={prevOf((r) => wholeSite(client, r))} />
-        </>
       ) : (
-        <TrafficSections view={site} prev={prevOf((r) => wholeSite(client, r))} />
+        <TrafficSections view={site} prev={prev} />
       )}
     </div>
-  );
-}
-
-/**
- * All locations: each location's traffic side by side (its country's visits, never
- * added together). Pick a location above for its daily charts.
- */
-function TrafficByLocation({
-  views,
-}: {
-  views: { key: string; label: string; country: string; city: string | null; view: TrafficView; prev: Totals | null }[];
-}) {
-  return (
-    <section className="mb-2">
-      <h2 className={`mb-3 ${sectionTitle}`}>AI Traffic by Location</h2>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-        {views.map((v) => {
-          const t = totals(v.view);
-          const p = v.prev;
-          const empty = v.view.length === 0;
-          return (
-            <div key={v.key} className={`${card} min-w-0`}>
-              <div className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</div>
-              {empty ? (
-                <p className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
-                  No Google Analytics visits from {countryName(v.country)} in this range
-                  {p ? ` (${p.measuredAi.toLocaleString()} measured AI visits in the comparison period)` : ""}.
-                </p>
-              ) : (
-                <>
-                  <div className={cardLabel}>Measured AI Visits</div>
-                  <div className="mt-1 text-3xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-                    {t.measuredAi.toLocaleString()}
-                  </div>
-                  <Change cur={t.measuredAi} prev={p?.measuredAi} />
-                  <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                    Visits from {countryName(v.country)}
-                    {v.city ? " (whole country)" : ""}
-                  </div>
-                  <div className="mt-2">
-                    <SessionCountSparkline
-                      points={v.view.map((s) => ({
-                        key: s.id,
-                        dateLabel: dateLabel(s.date),
-                        value: (s.aiAssistantSessions ?? 0) + (s.referralAiSessions ?? 0) + (s.unassignedAiSessions ?? 0),
-                      }))}
-                    />
-                  </div>
-                  <table className="mt-3 w-full text-sm">
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                      <AiRow label="AI Assistant" value={t.aiAssistant} prev={p?.aiAssistant} />
-                      <AiRow label="Referral (AI)" value={t.referralAi} prev={p?.referralAi} />
-                      <AiRow label="Unassigned (AI)" value={t.unassignedAi} prev={p?.unassignedAi} />
-                      <tr>
-                        <td className="py-1.5 text-zinc-600 dark:text-zinc-400">
-                          Direct{" "}
-                          <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                            estimated
-                          </span>
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
-                          ~{t.directAiEstimate.mid.toLocaleString()}
-                          <span className="ml-1 text-xs text-zinc-500 dark:text-zinc-400">of {t.direct.toLocaleString()}</span>
-                        </td>
-                        {p && (
-                          <td className="py-1.5 pl-3 text-right text-xs whitespace-nowrap tabular-nums">
-                            <Change cur={t.directAiEstimate.mid} prev={p.directAiEstimate.mid} approx inline />
-                          </td>
-                        )}
-                      </tr>
-                    </tbody>
-                  </table>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Each location is the visits Google Analytics places in its country, on every part of the site it tracks. Measured AI
-        visits = AI Assistant + Referral (AI) + Unassigned (AI). Pick a location above for its daily charts.
-      </p>
-    </section>
-  );
-}
-
-function AiRow({ label, value, prev }: { label: string; value: number; prev?: number }) {
-  return (
-    <tr>
-      <td className="py-1.5 text-zinc-600 dark:text-zinc-400">{label}</td>
-      <td className="py-1.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{value.toLocaleString()}</td>
-      {prev != null && (
-        <td className="py-1.5 pl-3 text-right text-xs whitespace-nowrap tabular-nums">
-          <Change cur={value} prev={prev} inline />
-        </td>
-      )}
-    </tr>
   );
 }
 
@@ -392,34 +226,28 @@ function AiRow({ label, value, prev }: { label: string; value: number; prev?: nu
  * A total against the "Compare To" period: "was 9 ▲ 3 (+33.3%)". More AI visits reads as
  * good (green). No percentage when the comparison was 0. Nothing without a comparison.
  */
-function Change({ cur, prev, approx, inline }: { cur: number; prev: number | null | undefined; approx?: boolean; inline?: boolean }) {
+function Change({ cur, prev, approx }: { cur: number; prev: number | null | undefined; approx?: boolean }) {
   if (prev == null) return null;
   const d = cur - prev;
   const tone =
     d > 0 ? "text-emerald-600 dark:text-emerald-400" : d < 0 ? "text-red-600 dark:text-red-400" : "text-zinc-400 dark:text-zinc-500";
   const pct = prev > 0 && d !== 0 ? ` (${d > 0 ? "+" : "−"}${Math.abs((d / prev) * 100).toFixed(1)}%)` : "";
-  const body = (
-    <>
+  return (
+    <div className="mt-0.5 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
       was {approx ? "~" : ""}
       {prev.toLocaleString()}{" "}
       <span className={`font-medium ${tone}`}>
-        {d === 0 ? "no change" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d).toLocaleString()}${inline ? "" : pct}`}
+        {d === 0 ? "no change" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d).toLocaleString()}${pct}`}
       </span>
-    </>
-  );
-  return inline ? (
-    <span className="text-zinc-500 dark:text-zinc-400">{body}</span>
-  ) : (
-    <div className="mt-0.5 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{body}</div>
+    </div>
   );
 }
 
-/** The AI Platform Traffic section, for the whole site or one location's country. */
-function TrafficSections({ view, prev: p, where }: { view: TrafficView; prev: Totals | null; where?: string }) {
+/** The AI Platform Traffic section: the whole site, every country. */
+function TrafficSections({ view, prev: p }: { view: TrafficView; prev: Totals | null }) {
   const t = totals(view);
   const sparklineForAi = (field: AiField): SessionCountPoint[] =>
     view.map((s) => ({ key: s.id, dateLabel: dateLabel(s.date), value: s[field] ?? 0 }));
-  const from = where ? ` from ${where}` : "";
 
   return (
     <>
@@ -430,7 +258,7 @@ function TrafficSections({ view, prev: p, where }: { view: TrafficView; prev: To
           and there&apos;s no reliable way to separate them.
         </p>
         {view.length === 0 ? (
-          <div className={emptyBox}>No AI traffic data{from} in this range.</div>
+          <div className={emptyBox}>No AI traffic data in this range.</div>
         ) : (
           // Two per row, each with what it counts (user, 2026-11-20: four across was too small).
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { PrintButton } from "@/components/print-button";
-import { countryName } from "@/lib/client-locations";
 import {
   normalizeReportData,
   trafficCaveat,
@@ -638,9 +637,10 @@ function answerSections({
   );
 }
 
-/** All locations: each location's headline figures side by side, before their chapters. */
-const TRAFFIC_AI_LABEL = "Measured AI Visits";
-
+/**
+ * All locations: each location's headline figures side by side, before their chapters. No
+ * traffic: it's the whole site, once, at the end (the user took per-location traffic off, 2026-11-20).
+ */
 function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n: number } }) {
   const chapters = d.byLocation ?? [];
   const isBenchmark = d.compare.kind === "benchmark";
@@ -650,33 +650,15 @@ function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n
     const cit = l.data.citations;
     const citingThen =
       cit?.previous?.ownSitePct ?? l.data.compare.ownSiteCitedPct ?? (l.data.compare.assumedZero?.includes("Answers Citing Your Site") ? 0 : null);
-    // Its country's Google Analytics visits (reports saved before 2026-11-20 carry whole-site
-    // traffic in each chapter, without a country: never shown here). No change when the two
-    // periods can't be compared as totals (trafficCaveat).
-    const tr = l.data.traffic?.country ? l.data.traffic : null;
-    const trPrev = tr?.previous ?? null;
-    const comparable = !!tr && !!trPrev && !trafficCaveat(tr, l.data.period.label, l.data.compare.trafficPeriod?.label ?? l.data.compare.label);
-    // Website sessions were taken off this table at the user's request (2026-11-20).
     return [
       ...cards,
       ...(cit
         ? [{ label: "Answers Citing Your Site", value: fmtPct(cit.current.ownSitePct), prev: citingThen != null ? fmtPct(citingThen) : null, diff: change(cit.current.ownSitePct, citingThen, "pts") }]
         : []),
-      ...(tr
-        ? [
-            {
-              label: TRAFFIC_AI_LABEL,
-              value: fmtInt(tr.current.measuredAiTotal),
-              prev: trPrev ? fmtInt(trPrev.measuredAiTotal) : null,
-              diff: comparable ? change(tr.current.measuredAiTotal, trPrev?.measuredAiTotal, "count") : null,
-            },
-          ]
-        : []),
     ];
   };
-  // Every measure any location has, in order (a location with no Google Analytics visits has no traffic rows).
+  // Every measure any location has, in order.
   const labels = [...new Set(chapters.flatMap((l) => metric(l).map((m) => m.label)))];
-  const hasTraffic = chapters.some((l) => l.data.traffic?.country);
   return (
     <section className="rpt-page">
       <SectionHeader
@@ -730,13 +712,6 @@ function locationsAtAGlance({ d, counter }: { d: MonthlyReportData; counter: { n
         is {then}
         {isBenchmark ? ", the same benchmark for every location" : ""}. Each location&apos;s own chapter follows, with its platforms,
         prompts, competitors and citations.
-        {hasTraffic && (
-          <>
-            {" "}
-            Measured AI visits are Google Analytics visits from each location&apos;s country, compared with the same days as the
-            AI Platform Traffic section: the AI Assistant channel plus referral and unassigned visits from AI platforms.
-          </>
-        )}
       </p>
     </section>
   );
@@ -821,11 +796,10 @@ export default async function MonthlyReportPage({ params }: { params: Promise<{ 
                 n={++counter.n}
                 title="AI Platform Traffic"
                 sub={
-                  d.traffic.country
-                    ? `Visits from ${countryName(d.traffic.country)} that Google Analytics attributes to AI platforms.`
-                    : d.byLocation
-                      ? "Visits to the whole website, from every country, that Google Analytics attributes to AI platforms."
-                      : "Visits to the website that Google Analytics attributes to AI platforms."
+                  // Whole site in every report; "whole" so a location's report isn't read as that location's visits.
+                  d.location || d.byLocation
+                    ? "Visits to the whole website that Google Analytics attributes to AI platforms."
+                    : "Visits to the website that Google Analytics attributes to AI platforms."
                 }
               />
               <Table>
