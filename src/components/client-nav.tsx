@@ -43,11 +43,14 @@ export function ClientNav({ clientId, tabs }: { clientId: string; tabs: readonly
     nav.scrollLeft = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2;
   }, [pathname]);
 
+  // From md up the sidebar stays in view while the page scrolls (the user's ask, 2026-11-23):
+  // sticky 1.5rem from the top, and self-start so it's only as tall as its links (stretched
+  // to the row's full height, sticky would have nowhere to move). Phones keep the tab row.
   return (
     <nav
       ref={navRef}
       aria-label="Client sections"
-      className="relative -mx-4 flex gap-1 overflow-x-auto px-4 sm:-mx-6 sm:px-6 md:mx-0 md:block md:w-44 md:shrink-0 md:space-y-1 md:overflow-visible md:px-0"
+      className="relative -mx-4 flex gap-1 overflow-x-auto px-4 sm:-mx-6 sm:px-6 md:sticky md:top-6 md:mx-0 md:block md:w-44 md:shrink-0 md:self-start md:space-y-1 md:overflow-visible md:px-0"
     >
       {items.map((item) => {
         const href = `/clients/${clientId}/${item.segment}${qs ? `?${qs}` : ""}`;
