@@ -98,6 +98,19 @@ const PROMPT_COL =
 // response here is a real answer and only those count as a crawl.
 const crawlDay = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
+const isLiveRun = (run: RunData) => run.rawResponses.some((r) => isLiveSearchModel(r.modelId));
+
+// The crawls Prompt Rankings' Change (first vs. latest) can start and end at: the
+// Live Search ones when the range has any. A Training Data crawl answers from what
+// the AI already knows, without searching, so it isn't a starting point for Live
+// Search results (Yellowbrick's Oct 12 crawl; the user's call, 2026-11-23). The
+// rest of the page still counts it.
+function changeRuns(runs: RunData[]): RunData[] {
+  const answered = runs.filter((run) => run.rawResponses.length > 0);
+  const live = answered.filter(isLiveRun);
+  return live.length ? live : answered;
+}
+
 // Other brands an answer names: its extracted Mention rows, minus the client's own.
 function brandsNamed(r: RawResponseData): number {
   const keys = new Set<string>();
@@ -114,7 +127,7 @@ interface PromptRankRow {
   checks: number;
   mentioned: number;
   visibilityPct: number;
-  visibilityChange: number | null; // pp change vs. the comparison period, or latest vs. first crawl
+  visibilityChange: number | null; // pp change vs. the comparison period, or latest vs. first point, platform by platform
   visibilityChangeTitle: string | null;
   top3Rate: number | null; // % of mentions (not of all checks) that ranked top-3
   shareOfVoicePct: number | null; // this prompt's client-brand mentions as a % of all brands' mentions on this prompt
@@ -168,13 +181,15 @@ const andList = (xs: string[]) => xs.reduce((acc, x, i) => (i === 0 ? x : `${acc
 // mechanism driving the Competitors table's Change column. Without one, it
 // is each prompt's most recent crawl vs. its first point in the range: the
 // benchmark, for the platforms its prompt table covers (the benchmark is the
-// start of tracking, so it comes first), else its first crawl.
+// start of tracking, so it comes first), else its first crawl. Only the crawls
+// in `changeRunIds` (see changeRuns) are first or latest points.
 function buildPromptRankings(
   primaryRuns: RunData[],
   comparisonRuns: RunData[],
   mode: PromptChangeMode,
   platforms: string[],
   benchmarks: BenchmarkData[],
+  changeRunIds: Set<string>,
 ): PromptRankRow[] {
   const hasComparison = mode === "period";
   interface CrawlPoint {
@@ -202,8 +217,6 @@ function buildPromptRankings(
     comparisonChecks: number;
     comparisonMentioned: number;
     byPlatform: Map<string, PlatformAcc>;
-    // Answered checks per run (and per benchmark), for first-vs-latest Visibility Change.
-    byRun: Map<string, { date: Date; label: string; checks: number; mentioned: number }>;
   }
   const acc = new Map<string, Acc>();
 
@@ -232,7 +245,6 @@ function buildPromptRankings(
           comparisonChecks: 0,
           comparisonMentioned: 0,
           byPlatform: new Map(),
-          byRun: new Map(),
         };
         acc.set(key, a);
       }
@@ -248,22 +260,20 @@ function buildPromptRankings(
           if (rank <= 3) a.top3Count += 1;
         }
       }
-      const point: CrawlPoint = {
-        runId: run.id,
-        date: run.startedAt,
-        label: crawlDay(run.startedAt),
-        // Every mention has a rank: outside the AI's list it's #1 (parser
-        // rule), and an answer that only cites the client's site is stored as
-        // #1 too (run-persistence.ts).
-        rank: mentioned ? (r.parsedResult?.clientBrandRank ?? 1) : null,
-        brandsNamed: brandsNamed(r),
-      };
-      if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
-      if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
-      const v = a.byRun.get(run.id) ?? { date: run.startedAt, label: crawlDay(run.startedAt), checks: 0, mentioned: 0 };
-      v.checks += 1;
-      if (mentioned) v.mentioned += 1;
-      a.byRun.set(run.id, v);
+      if (changeRunIds.has(run.id)) {
+        const point: CrawlPoint = {
+          runId: run.id,
+          date: run.startedAt,
+          label: crawlDay(run.startedAt),
+          // Every mention has a rank: outside the AI's list it's #1 (parser
+          // rule), and an answer that only cites the client's site is stored as
+          // #1 too (run-persistence.ts). So rank != null = the client is in it.
+          rank: mentioned ? (r.parsedResult?.clientBrandRank ?? 1) : null,
+          brandsNamed: brandsNamed(r),
+        };
+        if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
+        if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
+      }
       for (const m of r.parsedResult?.mentions ?? []) {
         a.totalMentionRows += 1;
         if (m.brand?.isClientBrand) a.clientMentionRows += 1;
@@ -271,47 +281,28 @@ function buildPromptRankings(
     }
   }
 
-  // A benchmark's per-platform rows start those platforms' Change (and the
-  // prompt's Visibility Change) when it's earlier than the first crawl --
-  // only for prompts tracked in this range, matched by the same text key.
+  // A benchmark's per-platform rows start those platforms' Change (Rank and
+  // Visibility) when it's earlier than the first crawl -- only for prompts
+  // tracked in this range, matched by the same text key.
   if (mode === "firstLatest") {
-    const firstCrawl = Math.min(...primaryRuns.map((run) => run.startedAt.getTime()));
+    const firstCrawl = Math.min(...primaryRuns.filter((run) => changeRunIds.has(run.id)).map((run) => run.startedAt.getTime()));
     for (const snap of benchmarks) {
       const rows = perPlatformRows(snap);
       if (!rows.length || snap.snapshotDate.getTime() >= firstCrawl) continue;
       const runId = `benchmark:${snap.id}`;
-      const byPrompt = new Map<string, BenchmarkRow[]>();
       for (const row of rows) {
-        const key = row.promptText.trim().toLowerCase();
-        if (acc.has(key) && rowDate(snap, row).getTime() < firstCrawl) byPrompt.set(key, [...(byPrompt.get(key) ?? []), row]);
-      }
-      for (const [key, promptRows] of byPrompt) {
-        const a = acc.get(key)!;
-        // The prompt's Visibility Change starts at all its benchmark rows together, dated by
-        // its earliest row ("May 12 (ISA benchmark; Claude Oct 19)").
-        const earliest = new Date(Math.min(...promptRows.map((r) => rowDate(snap, r).getTime())));
-        const others = otherDays(earliest, promptRows);
-        const v = {
-          date: earliest,
-          label: `${utcDay(earliest)} (${snap.source} benchmark${others.length ? `; ${andList(others)}` : ""})`,
-          checks: 0,
-          mentioned: 0,
+        const a = acc.get(row.promptText.trim().toLowerCase());
+        const date = rowDate(snap, row);
+        if (!a || date.getTime() >= firstCrawl) continue;
+        const point: CrawlPoint = {
+          runId,
+          date,
+          label: benchmarkDay(snap, date),
+          rank: row.position, // null = the client isn't in that answer
+          brandsNamed: row.brandsNamed ?? 0,
         };
-        for (const row of promptRows) {
-          const date = rowDate(snap, row);
-          const point: CrawlPoint = {
-            runId,
-            date,
-            label: benchmarkDay(snap, date),
-            rank: row.position,
-            brandsNamed: row.brandsNamed ?? 0,
-          };
-          const p = ensurePlatform(a, row.platform!);
-          if (!p.first || point.date < p.first.date) p.first = point;
-          v.checks += 1;
-          if (row.position != null) v.mentioned += 1;
-        }
-        a.byRun.set(runId, v);
+        const p = ensurePlatform(a, row.platform!);
+        if (!p.first || point.date < p.first.date) p.first = point;
       }
     }
   }
@@ -364,6 +355,62 @@ function buildPromptRankings(
     };
   }
 
+  // Visibility Change, platform by platform like Rank Change: each platform's
+  // latest answer vs. its own first point (its benchmark row, else its first
+  // crawl), counting only the platforms with an answer at both ends. Counting
+  // every answer at each end let a platform present at one end only move the
+  // figure by itself: Golden's benchmark has no Claude, so the same one platform
+  // naming it read as 1 of 3 -> 1 of 4, -8pp (the user's call, 2026-11-23).
+  function firstLatestVisibilityChange(a: Acc): { visibilityChange: number | null; visibilityChangeTitle: string | null } {
+    const counted: { platform: string; first: CrawlPoint; latest: CrawlPoint }[] = [];
+    const onlyOne: string[] = []; // one answer so far
+    const noCrawl: string[] = []; // a benchmark row, but no crawl answer in this range
+    for (const platform of platforms) {
+      const p = a.byPlatform.get(platform);
+      const name = PLATFORM_LABEL[platform] ?? platform;
+      if (!p?.first) continue;
+      if (!p.latest) noCrawl.push(name);
+      else if (p.first.runId === p.latest.runId) onlyOne.push(name);
+      else counted.push({ platform, first: p.first, latest: p.latest });
+    }
+    if (!counted.length) {
+      return { visibilityChange: null, visibilityChangeTitle: onlyOne.length ? "Only one crawl with an answer so far" : null };
+    }
+    const left = [
+      ...(onlyOne.length ? [`${andList(onlyOne)} not counted: only one answer so far`] : []),
+      ...(noCrawl.length ? [`${andList(noCrawl)} not counted: no crawl answer in this range`] : []),
+    ];
+    const n = counted.length;
+    const named = (pts: CrawlPoint[]) => pts.filter((pt) => pt.rank != null).length;
+    const fNamed = named(counted.map((c) => c.first));
+    const lNamed = named(counted.map((c) => c.latest));
+    // "May 28 (ISA benchmark)", or with platforms at other points: "May 12 (ISA benchmark); Claude Oct 19"
+    // (MacuMira) or "Oct 13; Gemini and Perplexity Nov 12" (Yellowbrick's later platforms).
+    const when = (end: "first" | "latest") => {
+      const groups = new Map<string, { date: number; platforms: string[] }>();
+      for (const c of counted) {
+        const pt = c[end];
+        const g = groups.get(pt.label) ?? { date: pt.date.getTime(), platforms: [] };
+        g.platforms.push(PLATFORM_LABEL[c.platform] ?? c.platform);
+        groups.set(pt.label, g);
+      }
+      const [[headLabel], ...rest] = [...groups.entries()].sort((x, y) => x[1].date - y[1].date);
+      const tag = headLabel.match(/ \(.*\)$/)?.[0] ?? ""; // "(ISA benchmark)", said once
+      return [
+        headLabel,
+        ...rest.map(([label, g]) => `${andList(g.platforms)} ${tag && label.endsWith(tag) ? label.slice(0, -tag.length) : label}`),
+      ].join("; ");
+    };
+    const platformsWord = n === 1 ? "platform" : "platforms";
+    return {
+      visibilityChange: ((lNamed - fNamed) / n) * 100,
+      visibilityChangeTitle:
+        `Named by ${fNamed} of ${n} ${platformsWord} on ${when("first")} → ${lNamed} of ${n} on ${when("latest")} ` +
+        `(${andList(counted.map((c) => PLATFORM_LABEL[c.platform] ?? c.platform))})` +
+        left.map((s) => `. ${s}`).join(""),
+    };
+  }
+
   return Array.from(acc.entries())
     .map(([key, a]) => {
       const platformCells: Record<string, PlatformRankCell> = {};
@@ -383,15 +430,7 @@ function buildPromptRankings(
       let visibilityChange: number | null = null;
       let visibilityChangeTitle: string | null = null;
       if (mode === "firstLatest") {
-        const crawls = Array.from(a.byRun.values()).sort((x, y) => x.date.getTime() - y.date.getTime());
-        if (crawls.length >= 2) {
-          const f = crawls[0];
-          const l = crawls[crawls.length - 1];
-          const fPct = (f.mentioned / f.checks) * 100;
-          const lPct = (l.mentioned / l.checks) * 100;
-          visibilityChange = lPct - fPct;
-          visibilityChangeTitle = `${fPct.toFixed(0)}% on ${f.label} → ${lPct.toFixed(0)}% on ${l.label}`;
-        }
+        ({ visibilityChange, visibilityChangeTitle } = firstLatestVisibilityChange(a));
       } else if (hasComparison) {
         const comparisonVisibilityPct = a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null;
         if (comparisonVisibilityPct != null) visibilityChange = visibilityPct - comparisonVisibilityPct;
@@ -578,8 +617,16 @@ function buildDashboardData(
     : comparisonRuns.some((run) => run.rawResponses.length > 0)
       ? "period"
       : "periodEmpty";
-  const promptRankings = buildPromptRankings(primaryRuns, comparisonRuns, promptChangeMode, platformsAvailable, benchmarksInRange);
-  const answeredRuns = primaryRuns.filter((run) => run.rawResponses.length > 0);
+  const answeredRuns = changeRuns(primaryRuns); // Change's crawls only (no Training Data ones beside Live Search)
+  const trainingSkipped = primaryRuns.some((run) => run.rawResponses.length > 0 && !answeredRuns.includes(run));
+  const promptRankings = buildPromptRankings(
+    primaryRuns,
+    comparisonRuns,
+    promptChangeMode,
+    platformsAvailable,
+    benchmarksInRange,
+    new Set(answeredRuns.map((run) => run.id)),
+  );
   const crawlSpan =
     answeredRuns.length >= 2
       ? { first: crawlDay(answeredRuns[0].startedAt), latest: crawlDay(answeredRuns[answeredRuns.length - 1].startedAt) }
@@ -618,6 +665,7 @@ function buildDashboardData(
     promptChangeMode,
     crawlSpan,
     changeStart,
+    trainingSkipped,
     rankCrawls,
     rankSeries,
     benchmarksInRange,
@@ -833,17 +881,25 @@ const COMMON_NOTE =
 
 /** What the Prompt Rankings Change columns compare, for this view's data. */
 function changeNote(data: DashboardData): string {
-  const { promptChangeMode, changeStart, crawlSpan } = data;
+  const { promptChangeMode, changeStart, crawlSpan, trainingSkipped } = data;
   if (promptChangeMode === "period") return "Change is vs. the comparison period selected in the date picker.";
   if (promptChangeMode === "periodEmpty") return "No crawls fall in the selected Compare To period, so Change is blank.";
+  const training = trainingSkipped
+    ? " Training Data crawls (answers given without searching the web) aren't a starting point for Live Search, so Change skips them."
+    : "";
+  const rest =
+    " An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl." +
+    " Visibility Change also goes platform by platform, from each platform's own first answer, and leaves out a platform with only one answer so far." +
+    training +
+    ' Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.';
   if (changeStart) {
     const uncovered = changeStart.uncovered;
-    return `Change is each prompt's most recent crawl (${changeStart.latest}) vs. the ${changeStart.label}, platform by platform, for ${andList(changeStart.platforms)}${uncovered.length ? `; ${andList(uncovered)} ${uncovered.length === 1 ? "wasn't" : "weren't"} part of the benchmark, so ${uncovered.length === 1 ? "its" : "their"} Change starts at ${uncovered.length === 1 ? "its" : "their"} first crawl` : ""}. An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`;
+    return `Change is each prompt's most recent crawl (${changeStart.latest}) vs. the ${changeStart.label}, platform by platform, for ${andList(changeStart.platforms)}${uncovered.length ? `; ${andList(uncovered)} ${uncovered.length === 1 ? "wasn't" : "weren't"} part of the benchmark, so ${uncovered.length === 1 ? "its" : "their"} Change starts at ${uncovered.length === 1 ? "its" : "their"} first crawl` : ""}.${rest}`;
   }
   if (crawlSpan) {
-    return `Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}). An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl. Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.`;
+    return `Change is each prompt's most recent crawl vs. its first crawl in this range (${crawlSpan.first} to ${crawlSpan.latest}).${rest}`;
   }
-  return 'Change needs at least two crawls in this range. Pick a "Compare To" period in the date picker to compare periods instead.';
+  return `Change needs at least two ${trainingSkipped ? "Live Search " : ""}crawls in this range.${training} Pick a "Compare To" period in the date picker to compare periods instead.`;
 }
 
 /** The Visibility Score card (with a location's name above it in the All locations view). */
