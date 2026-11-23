@@ -145,7 +145,7 @@ export function GenerateReportForm({
         type="button"
         onClick={handleGenerate}
         disabled={generating}
-        className="inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
       >
         {generating ? "Generating…" : exists ? "Regenerate report" : "Generate report"}
       </button>

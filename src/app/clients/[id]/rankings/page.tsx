@@ -850,7 +850,7 @@ export default async function ClientRankingsPage({
         {header}
 
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             Visibility by Location
           </h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -864,7 +864,7 @@ export default async function ClientRankingsPage({
         </section>
 
         <section className="mb-8">
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             Prompt Rankings
           </h2>
           <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
@@ -882,7 +882,7 @@ export default async function ClientRankingsPage({
         </section>
 
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             Competitors by Location
           </h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -926,7 +926,7 @@ export default async function ClientRankingsPage({
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Prompt Rankings
         </h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
@@ -936,7 +936,7 @@ export default async function ClientRankingsPage({
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Competitors
         </h2>
         {data.brandTable.length > 0 && data.rankCrawls.length > 0 && (
@@ -1070,15 +1070,15 @@ function PromptRankingTables({ data }: { data: DashboardData }) {
     <div className="space-y-6">
       {Array.from(promptGroups.entries()).map(([category, prompts]) => (
         <div key={category}>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
             {CATEGORY_LABEL[category] ?? category}
           </h3>
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-sm">
-              <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
+              <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   {/* Prompt column stays pinned while the platform columns scroll sideways (phones). */}
-                  <th rowSpan={2} className={`${PROMPT_COL} bg-brand px-4 py-2 align-bottom font-medium`}>
+                  <th rowSpan={2} className={`${PROMPT_COL} bg-zinc-100 px-4 py-2 align-bottom font-medium dark:bg-zinc-900`}>
                     Prompt
                   </th>
                   {platformsAvailable.map((platform) => (
@@ -1191,7 +1191,7 @@ function CompetitorTable({
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
       <table className="w-full text-sm">
-        <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
+        <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
           <tr>
             <th className={`${head} font-medium`}>Rank</th>
             <th className={`${head} font-medium`}>Brand</th>
@@ -1205,12 +1205,12 @@ function CompetitorTable({
           {brandTable.slice(0, limit).map((b, i) => {
             const sov = totalAppearances ? (b.appearances / totalAppearances) * 100 : 0;
             return (
-              <tr key={b.key} className={b.isClientBrand ? "bg-brand-soft dark:bg-red-950/40" : "bg-white dark:bg-zinc-950"}>
+              <tr key={b.key} className={b.isClientBrand ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
                 <td className={`${cell} tabular-nums text-zinc-500 dark:text-zinc-400`}>#{i + 1}</td>
                 <td className={`${cell} font-medium text-zinc-900 dark:text-zinc-100`}>
                   {b.name}
                   {b.isClientBrand && (
-                    <span className="ml-2 rounded bg-brand px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                    <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
                       You
                     </span>
                   )}
@@ -1251,7 +1251,7 @@ function BenchmarkBaseline({ benchmarks }: { benchmarks: DashboardData["benchmar
   if (benchmarks.length === 0) return null;
   return (
     <section className="mt-8">
-      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         Benchmark Competitor Baseline
       </h2>
       <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
@@ -1283,7 +1283,7 @@ function BenchmarkBaseline({ benchmarks }: { benchmarks: DashboardData["benchmar
             {snap.competitors.length > 0 && (
               <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-sm">
-                  <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
+                  <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                     <tr>
                       <th className="px-3 py-1.5 font-medium">Brand</th>
                       <th className="px-3 py-1.5 font-medium tabular-nums">Position</th>

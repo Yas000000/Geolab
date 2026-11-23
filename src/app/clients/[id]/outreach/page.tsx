@@ -123,7 +123,7 @@ const URL_RE = /(https?:\/\/[^\s)<>"]+[^\s)<>".,;:!?])/g;
 
 function ExtLink({ url, children }: { url: string; children?: React.ReactNode }) {
   return (
-    <a href={url} target="_blank" rel="noreferrer" className="text-brand-text [overflow-wrap:anywhere] hover:underline dark:text-red-400">
+    <a href={url} target="_blank" rel="noreferrer" className="text-blue-700 [overflow-wrap:anywhere] hover:underline dark:text-blue-400">
       {children ?? url}
     </a>
   );
@@ -211,7 +211,7 @@ function SiteCard({ s, num, brand, total, isTeam }: { s: Site; num: number; bran
   return (
     <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-semibold text-white">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-950 text-xs font-semibold text-white dark:bg-zinc-50 dark:text-zinc-950">
           {num}
         </span>
         <span className="font-semibold text-zinc-950 dark:text-zinc-50">{s.domain}</span>
@@ -380,9 +380,9 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
       ? "Needs a Live Search crawl with citations. Run one from Settings first."
       : null;
 
-  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400";
+  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
   const note = "mb-3 text-xs text-zinc-500 dark:text-zinc-400";
-  const thead = "bg-brand text-left text-xs uppercase tracking-wide text-white";
+  const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
   const tableWrap = "overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950";
 
   const sitesByDomain = new Map(plan?.sites.map((s) => [s.domain, s]) ?? []);

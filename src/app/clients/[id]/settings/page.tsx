@@ -91,7 +91,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </header>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Run Now
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -100,7 +100,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Locations
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -119,7 +119,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Tracked Prompts
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -133,7 +133,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Scheduling &amp; Integrations
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -153,7 +153,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           AI Crawler Access
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -178,7 +178,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Run History
         </h2>
         {client.runs.length === 0 ? (
@@ -188,7 +188,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         ) : (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-sm">
-              <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
+              <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   <th className="px-4 py-2 font-medium">Started</th>
                   <th className="px-4 py-2 font-medium">Prompt Set</th>
@@ -209,7 +209,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
                     <td className="px-4 py-3 text-right">
                       <Link
                         href={`/runs/${run.id}`}
-                        className="text-xs font-medium text-brand-text hover:underline dark:text-red-400"
+                        className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
                       >
                         View results →
                       </Link>
@@ -223,7 +223,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Client Login
         </h2>
         <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-950">
@@ -253,7 +253,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Archive or Delete
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">

@@ -239,7 +239,7 @@ export default function NewClientPage() {
             <Field label="Track each prompt in" hint="Every prompt is tracked in every location unless unticked here.">
               <div className="max-h-96 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-brand text-left text-xs uppercase tracking-wide text-white">
+                  <thead className="sticky top-0 bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                     <tr>
                       <th className="px-3 py-2 font-medium">Prompt</th>
                       {validLocations.map((l, i) => (
@@ -364,7 +364,7 @@ export default function NewClientPage() {
           )}
 
           {submitting && (
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
               Running the prompts across {platforms.length || 0} platform
               {platforms.length === 1 ? "" : "s"}… this usually takes 1-3 minutes.
             </div>
@@ -373,7 +373,7 @@ export default function NewClientPage() {
           <button
             type="submit"
             disabled={submitting || platforms.length === 0}
-            className="inline-flex items-center rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center rounded-full bg-zinc-950 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
           >
             {submitting ? "Running…" : "Add Client & Run"}
           </button>

@@ -94,7 +94,7 @@ function totals(view: TrafficView) {
   };
 }
 
-const sectionTitle = "text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400";
+const sectionTitle = "text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
 const emptyBox =
   "rounded-lg border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400";
 
@@ -274,14 +274,14 @@ function TrafficSections({ view, prev: p }: { view: TrafficView; prev: Totals | 
               description="Visits Google Analytics files as referrals from an AI platform its AI Assistant channel doesn't recognize, such as Perplexity."
               value={t.referralAi.toLocaleString()}
               change={<Change cur={t.referralAi} prev={p?.referralAi} />}
-              chart={<SessionCountSparkline points={sparklineForAi("referralAiSessions")} height={150} />}
+              chart={<SessionCountSparkline points={sparklineForAi("referralAiSessions")} color="#7c3aed" height={150} />}
             />
             <AiCard
               label="Unassigned (AI)"
               description="Visits Google Analytics couldn't place in any channel, but whose tracking tags name an AI platform."
               value={t.unassignedAi.toLocaleString()}
               change={<Change cur={t.unassignedAi} prev={p?.unassignedAi} />}
-              chart={<SessionCountSparkline points={sparklineForAi("unassignedAiSessions")} height={150} />}
+              chart={<SessionCountSparkline points={sparklineForAi("unassignedAiSessions")} color="#d97706" height={150} />}
             />
             <AiCard
               estimated

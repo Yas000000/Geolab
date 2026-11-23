@@ -92,7 +92,7 @@ function Delta({ value, unit = "pp" }: { value: number | null; unit?: string }) 
 
 function YouBadge() {
   return (
-    <span className="ml-2 rounded bg-brand px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+    <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
       You
     </span>
   );
@@ -236,8 +236,8 @@ export default async function ClientCitationsPage({
   const ownSiteDelta = comparison ? summary.ownSitePct - comparison.ownSitePct : null;
   const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
   const cardLabel = "text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
-  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400";
-  const thead = "bg-brand text-left text-xs uppercase tracking-wide text-white";
+  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+  const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
 
   return (
     <div>
@@ -364,7 +364,7 @@ export default async function ClientCitationsPage({
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                   {summary.sites.slice(0, 25).map((s, i) => (
-                    <tr key={s.domain} className={s.isOwn ? "bg-brand-soft dark:bg-red-950/40" : "bg-white dark:bg-zinc-950"}>
+                    <tr key={s.domain} className={s.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
                       <td className="px-4 py-2 tabular-nums text-zinc-500 dark:text-zinc-400">#{i + 1}</td>
                       <td className="px-4 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                         {s.domain}
@@ -413,7 +413,7 @@ export default async function ClientCitationsPage({
                     {ownPages.map((p) => (
                       <tr key={p.url} className="bg-white dark:bg-zinc-950">
                         <td className="px-4 py-2">
-                          <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-text underline dark:text-red-400">
+                          <a href={p.url} target="_blank" rel="noreferrer" className="text-blue-700 underline dark:text-blue-400">
                             {p.title ?? shortUrl(p.url)}
                           </a>
                           <div className="text-xs break-all text-zinc-400 dark:text-zinc-500">{shortUrl(p.url)}</div>
@@ -501,7 +501,7 @@ export default async function ClientCitationsPage({
 
                 {backing.pages.length > 0 && (
                   <>
-                    <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
+                    <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                       Pages Linked Where AI Mentions You
                     </h3>
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -516,9 +516,9 @@ export default async function ClientCitationsPage({
                         </thead>
                         <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                           {backing.pages.slice(0, 15).map((p) => (
-                            <tr key={p.url} className={p.isOwn ? "bg-brand-soft dark:bg-red-950/40" : "bg-white dark:bg-zinc-950"}>
+                            <tr key={p.url} className={p.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
                               <td className="min-w-[13rem] px-4 py-2">
-                                <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-text underline dark:text-red-400">
+                                <a href={p.url} target="_blank" rel="noreferrer" className="text-blue-700 underline dark:text-blue-400">
                                   {p.title ?? shortUrl(p.url)}
                                 </a>
                                 <div className="text-xs break-all text-zinc-400 dark:text-zinc-500">{shortUrl(p.url)}</div>
@@ -563,9 +563,9 @@ export default async function ClientCitationsPage({
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                   {summary.pages.slice(0, 25).map((p) => (
-                    <tr key={p.url} className={p.isOwn ? "bg-brand-soft dark:bg-red-950/40" : "bg-white dark:bg-zinc-950"}>
+                    <tr key={p.url} className={p.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
                       <td className="px-4 py-2">
-                        <a href={p.url} target="_blank" rel="noreferrer" className="text-brand-text underline dark:text-red-400">
+                        <a href={p.url} target="_blank" rel="noreferrer" className="text-blue-700 underline dark:text-blue-400">
                           {p.title ?? shortUrl(p.url)}
                         </a>
                         <div className="text-xs break-all text-zinc-400 dark:text-zinc-500">{shortUrl(p.url)}</div>
@@ -641,11 +641,11 @@ function AllLocations({
 }) {
   const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
   const cardLabel = "text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
-  const thead = "bg-brand text-left text-xs uppercase tracking-wide text-white";
+  const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
   return (
     <>
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">Citations by Location</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Citations by Location</h2>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {views.map((v) => {
             const delta = v.comparison ? v.summary.ownSitePct - v.comparison.ownSitePct : null;
@@ -684,7 +684,7 @@ function AllLocations({
                       </thead>
                       <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                         {v.summary.sites.slice(0, 10).map((s, i) => (
-                          <tr key={s.domain} className={s.isOwn ? "bg-brand-soft dark:bg-red-950/40" : "bg-white dark:bg-zinc-950"}>
+                          <tr key={s.domain} className={s.isOwn ? "bg-blue-50 dark:bg-blue-950/40" : "bg-white dark:bg-zinc-950"}>
                             <td className="px-2 py-2 tabular-nums text-zinc-500 dark:text-zinc-400">#{i + 1}</td>
                             <td className="px-2 py-2 font-medium break-all text-zinc-900 dark:text-zinc-100">
                               {s.domain}

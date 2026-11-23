@@ -62,7 +62,7 @@ export function ClientNav({ clientId, tabs }: { clientId: string; tabs: readonly
             aria-current={active ? "page" : undefined}
             className={`block shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
               active
-                ? "bg-brand text-white"
+                ? "bg-brand text-white" // Interdependence red, like the top bar (kept from the 2026-11-23 branding)
                 : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
             }`}
           >

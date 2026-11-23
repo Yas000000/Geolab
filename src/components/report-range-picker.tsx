@@ -172,7 +172,7 @@ export function ReportRangePicker({
                         aria-pressed={active}
                         className={`rounded-md px-3 py-1.5 text-left text-sm ${
                           active
-                            ? "bg-brand text-white"
+                            ? "bg-blue-600 text-white"
                             : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                         }`}
                       >
@@ -193,7 +193,7 @@ export function ReportRangePicker({
                 type="button"
                 onClick={apply}
                 disabled={!pendingStart}
-                className="flex-1 rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Apply
               </button>

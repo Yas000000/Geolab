@@ -119,7 +119,7 @@ export function OutreachBuildPanel({
           type="button"
           onClick={() => setConfirming(true)}
           disabled={!!disabledReason}
-          className="inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
         >
           {label}
         </button>
@@ -134,7 +134,7 @@ export function OutreachBuildPanel({
               type="button"
               onClick={start}
               disabled={starting}
-              className="inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:opacity-50"
+              className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
             >
               {starting ? "Starting…" : `Build it (${about(costEstimate)})`}
             </button>

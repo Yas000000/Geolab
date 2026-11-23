@@ -58,7 +58,7 @@ export default async function SettingsPage() {
 
           <a
             href="/api/auth/google/start"
-            className="mt-4 inline-block rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep"
+            className="mt-4 inline-block rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
           >
             {connection ? "Reconnect Google Account" : "Connect Google Account"}
           </a>

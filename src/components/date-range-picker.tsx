@@ -86,9 +86,9 @@ export function CalendarMonth({
               onMouseEnter={() => onDayHover(d)}
               className={`h-7 w-7 rounded text-sm tabular-nums ${
                 isStart || isEnd
-                  ? "bg-brand font-semibold text-white"
+                  ? "bg-blue-600 font-semibold text-white"
                   : isInRange
-                    ? "bg-brand-soft text-ink dark:bg-red-950 dark:text-red-200"
+                    ? "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200"
                     : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
               }`}
             >
@@ -121,7 +121,7 @@ function DropdownList<T extends string>({
           onClick={() => onSelect(opt.key)}
           className={`flex w-full items-center px-3 py-2 text-left text-sm ${
             activeKey === opt.key
-              ? "bg-brand text-white"
+              ? "bg-blue-600 text-white"
               : "text-zinc-700 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
           }`}
         >
@@ -504,7 +504,7 @@ export function DateRangePicker({ allTimeRange }: { allTimeRange?: DateRange | n
               <button
                 type="button"
                 onClick={applyRange}
-                className="flex-1 rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-deep"
+                className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
               >
                 Apply
               </button>
