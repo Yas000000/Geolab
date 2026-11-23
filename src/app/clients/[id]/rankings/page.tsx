@@ -120,6 +120,16 @@ function brandsNamed(r: RawResponseData): number {
   return keys.size;
 }
 
+// An answer's brand mentions for Prompt Rankings' Share of Voice: all of them,
+// and the client's own (an answer that only cites the client's site has none).
+function mentionRows(r: RawResponseData): { mentionRows: number; clientMentionRows: number } {
+  const mentions = r.parsedResult?.mentions ?? [];
+  return { mentionRows: mentions.length, clientMentionRows: mentions.filter((m) => m.brand?.isClientBrand).length };
+}
+
+// A percentage-point Change cell (Visibility, Top-3 Rate, Share of Voice) and its hover text.
+type ChangeCell = { change: number | null; title: string | null };
+
 interface PromptRankRow {
   key: string;
   text: string;
@@ -130,7 +140,9 @@ interface PromptRankRow {
   visibilityChange: number | null; // pp change vs. the comparison period, or latest vs. first point, platform by platform
   visibilityChangeTitle: string | null;
   top3Rate: number | null; // % of mentions (not of all checks) that ranked top-3
+  top3Change: ChangeCell; // pp, worked out the same way as visibilityChange
   shareOfVoicePct: number | null; // this prompt's client-brand mentions as a % of all brands' mentions on this prompt
+  sovChange: ChangeCell; // pp, likewise
   platforms: Record<string, PlatformRankCell>;
 }
 
@@ -198,6 +210,10 @@ function buildPromptRankings(
     label: string; // how it reads in the Change hover: "Nov 18", "Jun 1 (ISA benchmark)"
     rank: number | null; // null = the client isn't in this answer
     brandsNamed: number; // other brands this answer names
+    // Share of Voice at this point, the column's way: brand mentions in the answer
+    // (every brand, the client included) and how many of them are the client.
+    mentionRows: number;
+    clientMentionRows: number;
   }
   interface PlatformAcc {
     primaryRanks: number[];
@@ -216,6 +232,9 @@ function buildPromptRankings(
     clientMentionRows: number;
     comparisonChecks: number;
     comparisonMentioned: number;
+    comparisonTop3Count: number;
+    comparisonTotalMentionRows: number;
+    comparisonClientMentionRows: number;
     byPlatform: Map<string, PlatformAcc>;
   }
   const acc = new Map<string, Acc>();
@@ -244,6 +263,9 @@ function buildPromptRankings(
           clientMentionRows: 0,
           comparisonChecks: 0,
           comparisonMentioned: 0,
+          comparisonTop3Count: 0,
+          comparisonTotalMentionRows: 0,
+          comparisonClientMentionRows: 0,
           byPlatform: new Map(),
         };
         acc.set(key, a);
@@ -270,14 +292,14 @@ function buildPromptRankings(
           // #1 too (run-persistence.ts). So rank != null = the client is in it.
           rank: mentioned ? (r.parsedResult?.clientBrandRank ?? 1) : null,
           brandsNamed: brandsNamed(r),
+          ...mentionRows(r),
         };
         if (!platformAcc.first || point.date < platformAcc.first.date) platformAcc.first = point;
         if (!platformAcc.latest || point.date >= platformAcc.latest.date) platformAcc.latest = point;
       }
-      for (const m of r.parsedResult?.mentions ?? []) {
-        a.totalMentionRows += 1;
-        if (m.brand?.isClientBrand) a.clientMentionRows += 1;
-      }
+      const rows = mentionRows(r);
+      a.totalMentionRows += rows.mentionRows;
+      a.clientMentionRows += rows.clientMentionRows;
     }
   }
 
@@ -300,6 +322,9 @@ function buildPromptRankings(
           label: benchmarkDay(snap, date),
           rank: row.position, // null = the client isn't in that answer
           brandsNamed: row.brandsNamed ?? 0,
+          // The benchmark's brands: the others it counted, plus the client when it's in the answer.
+          mentionRows: (row.brandsNamed ?? 0) + (row.position != null ? 1 : 0),
+          clientMentionRows: row.position != null ? 1 : 0,
         };
         const p = ensurePlatform(a, row.platform!);
         if (!p.first || point.date < p.first.date) p.first = point;
@@ -320,7 +345,13 @@ function buildPromptRankings(
         const mentioned = !!r.parsedResult?.clientBrandMentioned;
         if (mentioned) a.comparisonMentioned += 1;
         const rank = r.parsedResult?.clientBrandRank;
-        if (mentioned && rank != null) ensurePlatform(a, r.platform).comparisonRanks.push(rank);
+        if (mentioned && rank != null) {
+          ensurePlatform(a, r.platform).comparisonRanks.push(rank);
+          if (rank <= 3) a.comparisonTop3Count += 1;
+        }
+        const rows = mentionRows(r);
+        a.comparisonTotalMentionRows += rows.mentionRows;
+        a.comparisonClientMentionRows += rows.clientMentionRows;
       }
     }
   }
@@ -355,13 +386,17 @@ function buildPromptRankings(
     };
   }
 
-  // Visibility Change, platform by platform like Rank Change: each platform's
-  // latest answer vs. its own first point (its benchmark row, else its first
-  // crawl), counting only the platforms with an answer at both ends. Counting
-  // every answer at each end let a platform present at one end only move the
-  // figure by itself: Golden's benchmark has no Claude, so the same one platform
-  // naming it read as 1 of 3 -> 1 of 4, -8pp (the user's call, 2026-11-23).
-  function firstLatestVisibilityChange(a: Acc): { visibilityChange: number | null; visibilityChangeTitle: string | null } {
+  // Visibility, Top-3 Rate and Share of Voice Change, platform by platform like
+  // Rank Change: each platform's latest answer vs. its own first point (its
+  // benchmark row, else its first crawl), counting only the platforms with an
+  // answer at both ends. Counting every answer at each end let a platform present
+  // at one end only move the figure by itself: Golden's benchmark has no Claude,
+  // so the same one platform naming it read as 1 of 3 -> 1 of 4, -8pp (the user's
+  // call, 2026-11-23). Each end's figure uses its column's own formula: Top-3
+  // Rate = answers ranking the client top 3 / answers naming it; Share of Voice =
+  // the client's brand mentions / every brand's (added 2026-11-23).
+  function firstLatestChanges(a: Acc): Record<"visibility" | "top3" | "sov", ChangeCell> {
+    const none = { change: null, title: null };
     const counted: { platform: string; first: CrawlPoint; latest: CrawlPoint }[] = [];
     const onlyOne: string[] = []; // one answer so far
     const noCrawl: string[] = []; // a benchmark row, but no crawl answer in this range
@@ -374,16 +409,21 @@ function buildPromptRankings(
       else counted.push({ platform, first: p.first, latest: p.latest });
     }
     if (!counted.length) {
-      return { visibilityChange: null, visibilityChangeTitle: onlyOne.length ? "Only one crawl with an answer so far" : null };
+      const one = { change: null, title: onlyOne.length ? "Only one crawl with an answer so far" : null };
+      return { visibility: one, top3: one, sov: one };
     }
     const left = [
       ...(onlyOne.length ? [`${andList(onlyOne)} not counted: only one answer so far`] : []),
       ...(noCrawl.length ? [`${andList(noCrawl)} not counted: no crawl answer in this range`] : []),
     ];
     const n = counted.length;
+    const firsts = counted.map((c) => c.first);
+    const latests = counted.map((c) => c.latest);
     const named = (pts: CrawlPoint[]) => pts.filter((pt) => pt.rank != null).length;
-    const fNamed = named(counted.map((c) => c.first));
-    const lNamed = named(counted.map((c) => c.latest));
+    const fNamed = named(firsts);
+    const lNamed = named(latests);
+    const top3 = (pts: CrawlPoint[]) => pts.filter((pt) => pt.rank != null && pt.rank <= 3).length;
+    const sum = (pts: CrawlPoint[], k: "mentionRows" | "clientMentionRows") => pts.reduce((s, pt) => s + pt[k], 0);
     // "May 28 (ISA benchmark)", or with platforms at other points: "May 12 (ISA benchmark); Claude Oct 19"
     // (MacuMira) or "Oct 13; Gemini and Perplexity Nov 12" (Yellowbrick's later platforms).
     const when = (end: "first" | "latest") => {
@@ -402,13 +442,39 @@ function buildPromptRankings(
       ].join("; ");
     };
     const platformsWord = n === 1 ? "platform" : "platforms";
-    return {
-      visibilityChange: ((lNamed - fNamed) / n) * 100,
-      visibilityChangeTitle:
-        `Named by ${fNamed} of ${n} ${platformsWord} on ${when("first")} → ${lNamed} of ${n} on ${when("latest")} ` +
-        `(${andList(counted.map((c) => PLATFORM_LABEL[c.platform] ?? c.platform))})` +
-        left.map((s) => `. ${s}`).join(""),
+    const start = when("first");
+    const end = when("latest");
+    const tail = `(${andList(counted.map((c) => PLATFORM_LABEL[c.platform] ?? c.platform))})` + left.map((s) => `. ${s}`).join("");
+    const visibility = {
+      change: ((lNamed - fNamed) / n) * 100,
+      title: `Named by ${fNamed} of ${n} ${platformsWord} on ${start} → ${lNamed} of ${n} on ${end} ${tail}`,
     };
+
+    // Top-3 Rate is a share of the answers naming the client, so it needs a mention at both ends.
+    const fTop = top3(firsts);
+    const lTop = top3(latests);
+    const top3Cell: ChangeCell =
+      fNamed && lNamed
+        ? {
+            change: (lTop / lNamed - fTop / fNamed) * 100,
+            title: `Top 3 in ${fTop} of the ${fNamed} answers naming you on ${start} → ${lTop} of ${lNamed} on ${end} ${tail}`,
+          }
+        : { change: null, title: `No Top-3 Rate to compare: named by ${fNamed} of ${n} ${platformsWord} on ${start} → ${lNamed} of ${n} on ${end} ${tail}` };
+
+    // Share of Voice needs brands named at both ends.
+    const fAll = sum(firsts, "mentionRows");
+    const lAll = sum(latests, "mentionRows");
+    const fMine = sum(firsts, "clientMentionRows");
+    const lMine = sum(latests, "clientMentionRows");
+    const sov: ChangeCell =
+      fAll && lAll
+        ? {
+            change: (lMine / lAll - fMine / fAll) * 100,
+            title: `Your share of brand mentions: ${fMine} of ${fAll} on ${start} → ${lMine} of ${lAll} on ${end} ${tail}`,
+          }
+        : { change: null, title: `No brands named on ${!fAll ? start : end}, so no Share of Voice to compare ${tail}` };
+
+    return { visibility, top3: fNamed || lNamed ? top3Cell : none, sov };
   }
 
   return Array.from(acc.entries())
@@ -427,13 +493,26 @@ function buildPromptRankings(
         platformCells[platform] = { avgRank, ...change, checks: p?.primaryChecks ?? 0 };
       }
       const visibilityPct = a.checks ? (a.mentioned / a.checks) * 100 : 0;
-      let visibilityChange: number | null = null;
-      let visibilityChangeTitle: string | null = null;
+      const top3Rate = a.mentioned ? (a.top3Count / a.mentioned) * 100 : null;
+      const shareOfVoicePct = a.totalMentionRows ? (a.clientMentionRows / a.totalMentionRows) * 100 : null;
+      const none: ChangeCell = { change: null, title: null };
+      let changes: Record<"visibility" | "top3" | "sov", ChangeCell> = { visibility: none, top3: none, sov: none };
       if (mode === "firstLatest") {
-        ({ visibilityChange, visibilityChangeTitle } = firstLatestVisibilityChange(a));
+        changes = firstLatestChanges(a);
       } else if (hasComparison) {
-        const comparisonVisibilityPct = a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null;
-        if (comparisonVisibilityPct != null) visibilityChange = visibilityPct - comparisonVisibilityPct;
+        // This range's figure minus the Compare To period's, each by the column's own formula.
+        const diff = (cur: number | null, prev: number | null): ChangeCell => ({
+          change: cur != null && prev != null ? cur - prev : null,
+          title: null,
+        });
+        changes = {
+          visibility: diff(visibilityPct, a.comparisonChecks ? (a.comparisonMentioned / a.comparisonChecks) * 100 : null),
+          top3: diff(top3Rate, a.comparisonMentioned ? (a.comparisonTop3Count / a.comparisonMentioned) * 100 : null),
+          sov: diff(
+            shareOfVoicePct,
+            a.comparisonTotalMentionRows ? (a.comparisonClientMentionRows / a.comparisonTotalMentionRows) * 100 : null,
+          ),
+        };
       }
 
       return {
@@ -443,10 +522,12 @@ function buildPromptRankings(
         checks: a.checks,
         mentioned: a.mentioned,
         visibilityPct,
-        visibilityChange,
-        visibilityChangeTitle,
-        top3Rate: a.mentioned ? (a.top3Count / a.mentioned) * 100 : null,
-        shareOfVoicePct: a.totalMentionRows ? (a.clientMentionRows / a.totalMentionRows) * 100 : null,
+        visibilityChange: changes.visibility.change,
+        visibilityChangeTitle: changes.visibility.title,
+        top3Rate,
+        top3Change: changes.top3,
+        shareOfVoicePct,
+        sovChange: changes.sov,
         platforms: platformCells,
       };
     })
@@ -889,7 +970,7 @@ function changeNote(data: DashboardData): string {
     : "";
   const rest =
     " An answer that leaves you out counts as one place below the last brand it names and always below your rank in the other crawl." +
-    " Visibility Change also goes platform by platform, from each platform's own first answer, and leaves out a platform with only one answer so far." +
+    " Visibility, Top-3 Rate and Share of Voice Change also go platform by platform, from each platform's own first answer, and leave out a platform with only one answer so far." +
     training +
     ' Hover a Change for details, or pick a "Compare To" period in the date picker to compare periods instead.';
   if (changeStart) {
@@ -936,6 +1017,39 @@ function VisibilityCard({ data, platformFilter, title }: { data: DashboardData; 
   );
 }
 
+// Prompt Rankings' percentage columns, each with its own Change (Top-3 Rate and
+// Share of Voice got theirs 2026-11-23, at the user's request).
+const PP_COLUMNS = ["Visibility", "Top-3 Rate", "Share of Voice"] as const;
+
+/**
+ * A "%" cell and its Change cell in percentage points: green up, red down, a
+ * dash when it rounds to no change or there's nothing to compare. Hover = how
+ * the Change was worked out.
+ */
+function PctWithChange({ pct, cell }: { pct: number | null; cell: ChangeCell }) {
+  const pp = cell.change == null ? null : Math.round(cell.change);
+  return (
+    <>
+      <td className="border-l border-zinc-100 px-1.5 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
+        {pct != null ? `${pct.toFixed(0)}%` : "—"}
+      </td>
+      <td className="px-1.5 py-2 text-right tabular-nums whitespace-nowrap" title={cell.title ?? undefined}>
+        {pp == null ? (
+          <span className="text-zinc-300 dark:text-zinc-700">—</span>
+        ) : (
+          <span
+            className={
+              pp > 0 ? "text-emerald-600 dark:text-emerald-400" : pp < 0 ? "text-red-600 dark:text-red-400" : "text-zinc-400 dark:text-zinc-600"
+            }
+          >
+            {pp > 0 ? `+${pp}pp` : pp < 0 ? `-${Math.abs(pp)}pp` : "–"}
+          </span>
+        )}
+      </td>
+    </>
+  );
+}
+
 /** Prompt Rankings: a table per category, each platform with its own Rank and Change. */
 function PromptRankingTables({ data }: { data: DashboardData }) {
   const { promptRankings, platformsAvailable } = data;
@@ -976,29 +1090,33 @@ function PromptRankingTables({ data }: { data: DashboardData }) {
                       {PLATFORM_LABEL[platform] ?? platform}
                     </th>
                   ))}
-                  <th colSpan={2} className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800">
-                    Visibility
-                  </th>
-                  <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
-                    Top-3 Rate
-                  </th>
-                  <th rowSpan={2} className="px-2.5 py-2 align-bottom font-medium tabular-nums">
-                    Share of Voice
-                  </th>
+                  {PP_COLUMNS.map((label) => (
+                    <th
+                      key={label}
+                      colSpan={2}
+                      className="border-l border-zinc-200 px-2 py-1 text-center font-medium whitespace-nowrap dark:border-zinc-800"
+                    >
+                      {label}
+                    </th>
+                  ))}
                 </tr>
                 <tr>
                   {platformsAvailable.map((platform) => (
                     <Fragment key={platform}>
-                      <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
+                      <th className="border-l border-zinc-200 px-1.5 py-1.5 text-right text-[10px] font-medium tabular-nums dark:border-zinc-800">
                         Rank
                       </th>
-                      <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
+                      <th className="px-1.5 py-1.5 text-right text-[10px] font-medium tabular-nums">Change</th>
                     </Fragment>
                   ))}
-                  <th className="border-l border-zinc-200 px-2 py-1.5 text-right font-medium tabular-nums dark:border-zinc-800">
-                    %
-                  </th>
-                  <th className="px-2 py-1.5 text-right font-medium tabular-nums">Change</th>
+                  {PP_COLUMNS.map((label) => (
+                    <Fragment key={label}>
+                      <th className="border-l border-zinc-200 px-1.5 py-1.5 text-right text-[10px] font-medium tabular-nums dark:border-zinc-800">
+                        %
+                      </th>
+                      <th className="px-1.5 py-1.5 text-right text-[10px] font-medium tabular-nums">Change</th>
+                    </Fragment>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -1009,10 +1127,10 @@ function PromptRankingTables({ data }: { data: DashboardData }) {
                       const cell = p.platforms[platform];
                       return (
                         <Fragment key={platform}>
-                          <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
+                          <td className="border-l border-zinc-100 px-1.5 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
                             {cell?.avgRank != null ? cell.avgRank.toFixed(1) : "—"}
                           </td>
-                          <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={cell?.changeTitle ?? undefined}>
+                          <td className="px-1.5 py-2 text-right tabular-nums whitespace-nowrap" title={cell?.changeTitle ?? undefined}>
                             {cell?.movement == null ? (
                               <span className="text-zinc-300 dark:text-zinc-700">—</span>
                             ) : (
@@ -1033,31 +1151,9 @@ function PromptRankingTables({ data }: { data: DashboardData }) {
                         </Fragment>
                       );
                     })}
-                    <td className="border-l border-zinc-100 px-2 py-2 text-right tabular-nums whitespace-nowrap dark:border-zinc-900">
-                      {p.visibilityPct.toFixed(0)}%
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap" title={p.visibilityChangeTitle ?? undefined}>
-                      {p.visibilityChange == null ? (
-                        <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                      ) : (
-                        <span
-                          className={
-                            p.visibilityChange > 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : p.visibilityChange < 0
-                                ? "text-red-600 dark:text-red-400"
-                                : "text-zinc-400 dark:text-zinc-600"
-                          }
-                        >
-                          {p.visibilityChange > 0 ? "+" : p.visibilityChange < 0 ? "-" : "–"}
-                          {p.visibilityChange !== 0 ? Math.abs(p.visibilityChange).toFixed(0) + "pp" : ""}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{p.top3Rate != null ? `${p.top3Rate.toFixed(0)}%` : "—"}</td>
-                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
-                      {p.shareOfVoicePct != null ? `${p.shareOfVoicePct.toFixed(0)}%` : "—"}
-                    </td>
+                    <PctWithChange pct={p.visibilityPct} cell={{ change: p.visibilityChange, title: p.visibilityChangeTitle }} />
+                    <PctWithChange pct={p.top3Rate} cell={p.top3Change} />
+                    <PctWithChange pct={p.shareOfVoicePct} cell={p.sovChange} />
                   </tr>
                 ))}
               </tbody>
