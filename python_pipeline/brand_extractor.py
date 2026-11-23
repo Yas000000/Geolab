@@ -14,6 +14,7 @@ geo-rank-checker dba814e).
 import asyncio
 import json
 import os
+import time
 
 import anthropic
 
@@ -53,7 +54,8 @@ def _get_client() -> anthropic.AsyncAnthropic:
     return _client
 
 
-async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> None:
+async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> bool:
+    """False when the call itself failed (worth one retry); True once it answered."""
     client = _get_client()
     # Index the payload locally (0-based within THIS batch), not by each item's
     # global position. Synced from geo-rank-checker 86e1889: a batch sent with
@@ -97,15 +99,25 @@ async def _run_batch(batch: list[dict], result_map: dict, batch_num: int) -> Non
         missing = len(batch) - len(matched)
         if missing:
             print(f"[brand_extractor] Batch {batch_num}: {missing}/{len(batch)} items had no matching index in the model's response")
+        return True
 
     except Exception as exc:
         print(f"[brand_extractor] Batch {batch_num} error: {exc}")
+        return False
 
 
-async def extract_brands(raw_responses: dict) -> dict:
+# A batch whose call fails (a rate limit, an overload) is tried once more after
+# this pause, if there's time before `retry_until` (2026-11-23): otherwise its
+# answers are saved with no brands, so their competitors are missing.
+_RETRY_PAUSE_S = 10
+_MIN_RETRY_WINDOW_S = 30
+
+
+async def extract_brands(raw_responses: dict, retry_until: float | None = None) -> dict:
     """
     Args:
         raw_responses: {platform_name: {prompt_text: response_text}}
+        retry_until: time.monotonic() deadline for retrying failed batches; None = no retry.
 
     Returns:
         {(platform_name, prompt_text): [brand_name, ...]} -- ranked brand names per response.
@@ -126,8 +138,24 @@ async def extract_brands(raw_responses: dict) -> dict:
         return result_map
 
     batches = [items[i : i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
-    await asyncio.gather(*(
+    ok = await asyncio.gather(*(
         _run_batch(batch, result_map, i + 1) for i, batch in enumerate(batches)
     ))
+
+    failed = [i for i, good in enumerate(ok) if not good]
+    if failed and retry_until is not None:
+        window = retry_until - time.monotonic() - _RETRY_PAUSE_S
+        if window >= _MIN_RETRY_WINDOW_S:
+            await asyncio.sleep(_RETRY_PAUSE_S)
+            # A batch writes result_map only after its call returns, with no await in
+            # between, so one cut off at the deadline leaves nothing half-written.
+            tasks = [asyncio.ensure_future(_run_batch(batches[i], result_map, i + 1)) for i in failed]
+            done, pending = await asyncio.wait(tasks, timeout=window)
+            for task in pending:
+                task.cancel()
+            recovered = sum(1 for t in done if t.exception() is None and t.result())
+            print(f"[brand_extractor] retried {len(failed)} failed batches, {recovered} recovered")
+        else:
+            print(f"[brand_extractor] {len(failed)} failed batches, no time left to retry them")
 
     return result_map

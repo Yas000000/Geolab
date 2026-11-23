@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
 import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
+import { SCHEDULE_OPTIONS, type ScheduleValue } from "@/lib/schedule-options";
 
 // A place the client is tracked in; Live Search asks each prompt once per location it's ticked for.
 interface LocationDraft {
@@ -47,7 +48,7 @@ export default function NewClientPage() {
   const [brandName, setBrandName] = useState("");
   const [domain, setDomain] = useState("");
   const [promptsText, setPromptsText] = useState("");
-  const [schedule, setSchedule] = useState<"MANUAL" | "NIGHTLY" | "WEEKLY" | "MONTHLY">("MANUAL");
+  const [schedule, setSchedule] = useState<ScheduleValue>("MANUAL");
   const [ga4PropertyId, setGa4PropertyId] = useState("");
   const [gscSiteUrl, setGscSiteUrl] = useState("");
   const [platforms, setPlatforms] = useState<string[]>(["openai", "claude", "gemini"]);
@@ -284,10 +285,11 @@ export default function NewClientPage() {
                 onChange={(e) => setSchedule(e.target.value as typeof schedule)}
                 className={inputClass}
               >
-                <option value="MANUAL">Manual</option>
-                <option value="NIGHTLY">Nightly</option>
-                <option value="WEEKLY">Weekly</option>
-                <option value="MONTHLY">Monthly</option>
+                {SCHEDULE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </Field>
             <Field label="GA4 Property ID">

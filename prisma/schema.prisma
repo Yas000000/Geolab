@@ -10,11 +10,15 @@ datasource db {
   provider = "postgresql"
 }
 
+// When a client's scheduled runs happen (src/lib/due-clients.ts). WEEKLY and
+// MONTHLY count days from the last scheduled run (every 7 / every 30);
+// FIRST_OF_MONTH is the calendar: the 1st of each month (UTC), added 2026-11-23.
 enum RunSchedule {
   MANUAL
   NIGHTLY
   WEEKLY
   MONTHLY
+  FIRST_OF_MONTH
 }
 
 model Client {

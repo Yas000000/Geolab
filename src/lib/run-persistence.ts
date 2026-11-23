@@ -5,6 +5,7 @@ import { resolveBrandNames } from "@/lib/brand-resolution";
 import { isOwnSite, siteDomain } from "@/lib/citations";
 import { Agent, fetch as undiciFetch } from "undici";
 import { internalHeaders } from "@/lib/internal-key";
+import type { ScheduleValue } from "@/lib/schedule-options";
 
 // The Python pipeline replies only once the whole run is done, so no
 // response headers arrive until then. Node's built-in fetch gives up after
@@ -54,7 +55,7 @@ interface PipelineResponse {
 export async function findOrCreateClient(
   name: string,
   domain: string,
-  extra?: { schedule?: "MANUAL" | "NIGHTLY" | "WEEKLY" | "MONTHLY"; ga4PropertyId?: string; gscSiteUrl?: string },
+  extra?: { schedule?: ScheduleValue; ga4PropertyId?: string; gscSiteUrl?: string },
 ) {
   const existing = await prisma.client.findFirst({
     where: { name: { equals: name, mode: "insensitive" } },

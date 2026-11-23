@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
+import { SCHEDULE_NOTE, SCHEDULE_OPTIONS, type ScheduleValue } from "@/lib/schedule-options";
 
 const inputClass =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-600";
@@ -14,7 +15,7 @@ export function ClientSettingsForm({
   initialScheduledLiveSearch,
 }: {
   clientId: string;
-  initialSchedule: "MANUAL" | "NIGHTLY" | "WEEKLY" | "MONTHLY";
+  initialSchedule: ScheduleValue;
   initialGa4PropertyId: string;
   initialGscSiteUrl: string;
   initialScheduledLiveSearch: boolean;
@@ -86,10 +87,11 @@ export function ClientSettingsForm({
         <div>
           <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Schedule</label>
           <select value={schedule} onChange={(e) => setSchedule(e.target.value as typeof schedule)} className={inputClass}>
-            <option value="MANUAL">Manual</option>
-            <option value="NIGHTLY">Nightly</option>
-            <option value="WEEKLY">Weekly</option>
-            <option value="MONTHLY">Monthly</option>
+            {SCHEDULE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
           {/* Live Search is the only kind that asks as if from the client's locations. */}
           <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
@@ -102,6 +104,7 @@ export function ClientSettingsForm({
             />
             Scheduled runs use Live Search
           </label>
+          {schedule !== "MANUAL" && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{SCHEDULE_NOTE}</p>}
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">GA4 Property ID</label>

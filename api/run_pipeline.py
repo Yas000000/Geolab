@@ -1,4 +1,5 @@
 import asyncio
+import time
 import traceback
 
 from fastapi import FastAPI, HTTPException
@@ -27,6 +28,21 @@ DEFAULT_PLATFORMS_LIVE = DEFAULT_PLATFORMS + ["perplexity"]
 # limits, but per-call errors are already handled gracefully if it does.
 PER_PROVIDER_CONCURRENCY = 15
 DEFAULT_CATEGORY = "general"
+
+# Failed answers get one more try at the end of the run (2026-11-23): a call
+# refused for a rate limit or a passing outage is saved as a blank answer,
+# which every page leaves out, and a scheduled run with blanks still counts as
+# done, so the gap would stay until the next scheduled run. Only the failed
+# calls are asked again, after a pause that lets the platform's rate limit
+# reset. All of it fits inside the function's 800s limit (vercel.json): the
+# retries stop by ANSWERS_DONE_BY_S, leaving the rest for brand extraction and
+# the portal saving the run, and are skipped when there's too little time left.
+RETRY_PAUSE_S = 20
+ANSWERS_DONE_BY_S = 600
+MIN_RETRY_WINDOW_S = 60
+# Brand extraction's own one retry of a failed batch stops here, leaving the
+# portal ~60s to save the run before the 800s limit.
+EXTRACTION_DONE_BY_S = 740
 
 
 class PromptInput(BaseModel):
@@ -125,6 +141,7 @@ def _build_manual_prompt_groups(prompts: list[PromptInput]) -> tuple[list, list]
 
 @app.post("/api/run_pipeline")
 async def run_pipeline(payload: RunPipelineRequest) -> dict:
+    started = time.monotonic()
     platform_registry = PLATFORMS_LIVE if payload.live_search else PLATFORMS
     platforms_requested = payload.platforms or (DEFAULT_PLATFORMS_LIVE if payload.live_search else DEFAULT_PLATFORMS)
     selected = {k: platform_registry[k] for k in platforms_requested if k in platform_registry}
@@ -243,13 +260,40 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
         located = [locations_by_id[i] for i in prompt_entry.get("locationIds") or [] if i in locations_by_id]
         return located or [None]
 
-    tasks = [
-        run_one(prompt_entry, platform_key, query_fn, location)
+    jobs = [
+        (prompt_entry, platform_key, query_fn, location)
         for prompt_entry in flat_prompts
         for location in where(prompt_entry)
         for platform_key, query_fn in selected.items()
     ]
-    results = await asyncio.gather(*tasks)
+    results = list(await asyncio.gather(*(run_one(*job) for job in jobs)))
+
+    # One more try for the answers that failed (see RETRY_PAUSE_S). A retry that
+    # fails again, or doesn't finish in time, leaves the first result in place.
+    failed = [i for i, r in enumerate(results) if not (r["responseText"] or "").strip()]
+    retried = recovered = 0
+    if failed:
+        window = ANSWERS_DONE_BY_S - (time.monotonic() - started) - RETRY_PAUSE_S
+        if window >= MIN_RETRY_WINDOW_S:
+            await asyncio.sleep(RETRY_PAUSE_S)
+            retry_tasks = {asyncio.ensure_future(run_one(*jobs[i])): i for i in failed}
+            done, pending = await asyncio.wait(retry_tasks, timeout=window)
+            for task in pending:
+                task.cancel()
+            retried = len(failed)
+            for task in done:
+                if task.exception() is None and (task.result()["responseText"] or "").strip():
+                    results[retry_tasks[task]] = task.result()
+                    recovered += 1
+            print(f"[run_pipeline] retried {retried} failed answers, {recovered} recovered, "
+                  f"{len(pending)} unfinished at the time limit")
+        else:
+            print(f"[run_pipeline] {len(failed)} failed answers, no time left to retry them")
+        still_failed = len(failed) - recovered
+        if still_failed:
+            generation_warnings.append(
+                f"{still_failed} answers failed{' after a retry' if retried else ' (no time left to retry)'}"
+            )
 
     # Stage 3: brand extraction. extract_brands() needs its existing
     # {platform: {prompt_text: response_text}} contract -- safe to key by
@@ -270,7 +314,7 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
     for r in results:
         raw_responses_by_platform.setdefault(extraction_key(r), {})[r["promptText"]] = normalize_text(r["responseText"])
 
-    extracted = await extract_brands(raw_responses_by_platform)
+    extracted = await extract_brands(raw_responses_by_platform, retry_until=started + EXTRACTION_DONE_BY_S)
     for r in results:
         key = (extraction_key(r), r["promptText"])
         r["parsed"]["extractedBrands"] = extracted.get(key, [])
