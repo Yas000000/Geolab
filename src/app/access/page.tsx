@@ -5,6 +5,7 @@ import { requireTeamPage } from "@/lib/viewer";
 import { CLIENT_TABS, cleanTabs } from "@/lib/auth";
 import { LocalTime, TeamAccess } from "@/components/access";
 import { PAGE_WIDTH } from "@/lib/page-width";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Access · GEO Reporting Portal" };
@@ -29,7 +30,7 @@ export default async function AccessPage() {
       },
     }),
   ]);
-  const h2 = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+  const h2 = "mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500";
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
@@ -42,9 +43,9 @@ export default async function AccessPage() {
 
         <section className="mb-10">
           <h2 className={h2}>Team</h2>
-          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+          <InfoNote className="mb-3">
             A new team member gets a generated password and chooses their own the first time they sign in.
-          </p>
+          </InfoNote>
           <TeamAccess
             viewerId={viewer.id}
             members={team.map((m) => ({
@@ -60,7 +61,7 @@ export default async function AccessPage() {
 
         <section>
           <h2 className={h2}>Client logins</h2>
-          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">One shared login per client.</p>
+          <InfoNote className="mb-3">One shared login per client.</InfoNote>
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-sm">
               <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">

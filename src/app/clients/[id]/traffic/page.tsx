@@ -12,6 +12,7 @@ import {
 } from "@/lib/date-range";
 import { estimateDirectAiSessions } from "@/lib/ai-traffic";
 import { requireTab } from "@/lib/viewer";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -94,7 +95,7 @@ function totals(view: TrafficView) {
   };
 }
 
-const sectionTitle = "text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+const sectionTitle = "text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500";
 const emptyBox =
   "rounded-lg border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400";
 
@@ -253,10 +254,10 @@ function TrafficSections({ view, prev: p }: { view: TrafficView; prev: Totals | 
     <>
       <section>
         <h2 className={`mb-1 ${sectionTitle}`}>AI Platform Traffic</h2>
-        <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+        <InfoNote className="mb-4">
           Doesn&apos;t include Google&apos;s AI Overviews or AI Mode: Google counts those visits as ordinary organic search,
           and there&apos;s no reliable way to separate them.
-        </p>
+        </InfoNote>
         {view.length === 0 ? (
           <div className={emptyBox}>No AI traffic data in this range.</div>
         ) : (

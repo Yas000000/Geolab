@@ -4,6 +4,7 @@ import { StatusPill } from "@/components/status-pill";
 import { LocalDay, RestoreButton } from "@/components/client-lifecycle";
 import { requireTeamPage } from "@/lib/viewer";
 import { PAGE_WIDTH } from "@/lib/page-width";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -119,13 +120,13 @@ export default async function ClientsPage() {
 
         {archived.length > 0 && (
           <details className="group mt-8">
-            <summary className="cursor-pointer select-none text-sm font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
+            <summary className="cursor-pointer select-none text-sm font-semibold uppercase tracking-wide text-blue-600 hover:text-blue-700 dark:text-blue-500 dark:hover:text-blue-400">
               Archived clients ({archived.length})
             </summary>
-            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <InfoNote className="mt-2">
               Archived clients keep all their data but don&apos;t run on a schedule. Open one to view its history, or
               restore it here.
-            </p>
+            </InfoNote>
             <ul className="mt-3 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">
               {archived.map((client) => (
                 <li

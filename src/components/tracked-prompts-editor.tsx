@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { dedupePrompts, formatPromptsText, parsePromptsText, promptKey, type ParsedPrompt } from "@/lib/parse-prompts";
+import { InfoNote } from "@/components/info-note";
 
 // Live Search measured ~285s for 55 prompts (Yellowbrick, 2026-10-12);
 // scaling linearly, the run routes' 800s maxDuration fits ~150. Warn at
@@ -109,10 +110,10 @@ export function TrackedPromptsEditor({
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <InfoNote>
         The prompts Run Now and scheduled runs check. Paste new prompts on their own lines, edit or delete existing
         ones, then save. Use <code>## Category Name</code> to start a section; lines below a heading belong to it.
-      </p>
+      </InfoNote>
 
       <textarea
         rows={16}

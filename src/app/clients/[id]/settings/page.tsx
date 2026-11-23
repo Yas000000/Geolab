@@ -91,7 +91,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </header>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Run Now
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -100,7 +100,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Locations
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -119,7 +119,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Tracked Prompts
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -133,7 +133,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Scheduling &amp; Integrations
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -153,7 +153,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           AI Crawler Access
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -178,7 +178,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Run History
         </h2>
         {client.runs.length === 0 ? (
@@ -223,7 +223,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Client Login
         </h2>
         <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-950">
@@ -253,7 +253,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Archive or Delete
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">

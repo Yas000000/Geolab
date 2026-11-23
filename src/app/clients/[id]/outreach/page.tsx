@@ -7,6 +7,7 @@ import { siteDomain } from "@/lib/citations";
 import { CATEGORY_LABEL } from "@/lib/geo-platform-map";
 import { COST_PAGE_CHECKS, COST_PER_PROMPT, COST_PER_SITE, latestOutreachPlans, outreachOverview } from "@/lib/outreach";
 import { requireTab } from "@/lib/viewer";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -380,8 +381,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
       ? "Needs a Live Search crawl with citations. Run one from Settings first."
       : null;
 
-  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
-  const note = "mb-3 text-xs text-zinc-500 dark:text-zinc-400";
+  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500";
   const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
   const tableWrap = "overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950";
 
@@ -509,7 +509,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
           {ranked.length > 0 && (
             <section className="mb-8">
               <h2 className={sectionTitle}>Priority Order</h2>
-              <p className={note}>
+              <InfoNote className="mb-3">
                 Priority weighs <strong>Existing</strong> and <strong>Potential</strong>{" "}
                 {Math.round(plan.existing_weight * 100)}/{Math.round((1 - plan.existing_weight) * 100)}.{" "}
                 <strong>Existing</strong> is what AI cites today: how many of the {total} prompts cite the site, weighed
@@ -525,7 +525,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
                 , each adjusted for how much a prompt&apos;s answers rely on that kind of page. Getting onto a page AI
                 already cites adds no new page, so those sites have Existing only.
                 {plan.rates.list?.reason ? ` Why the placed-article estimate: ${plan.rates.list.reason}` : ""}
-              </p>
+              </InfoNote>
               <div className={tableWrap}>
                 <table className="w-full text-sm">
                   <thead className={thead}>
@@ -594,12 +594,12 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
           {ownPages.length > 0 && (
             <section className="mb-8">
               <h2 className={sectionTitle}>Answer With Your Own Page</h2>
-              <p className={note}>
+              <InfoNote className="mb-3">
                 These cited pages are competitors&apos; own lists and service pages. A rival rarely adds another firm to
                 its own list, so the realistic answer is a stronger page on {brand}&apos;s own site, answering the same
                 question, for AI platforms to cite.
                 {ownLever ? ` They are the pages to answer first under action #${ownLever.num}.` : ""}
-              </p>
+              </InfoNote>
               <div className={tableWrap}>
                 <table className="w-full text-sm">
                   <thead className={thead}>
@@ -655,7 +655,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
           {plan.prompts.length > 0 && (
             <section className="mb-8">
               <h2 className={sectionTitle}>Prompt Action Plan</h2>
-              <p className={note}>
+              <InfoNote className="mb-3">
                 What to do for each tracked prompt, drawn from the priority order above. Cited sites that share a route
                 are combined into one action. Every prompt where {brand} isn&apos;t in the top 3 also gets the two
                 actions that create a new page. Actions are listed in priority order for the prompt, so the first is
@@ -665,7 +665,7 @@ export default async function OutreachPage({ params }: { params: Promise<{ id: s
                 is an AI model&apos;s judgment of where {brand} would likely land if it completed that action alone and
                 AI kept citing the same sources; for the two new-page actions, it gives the chance of the top 3 once AI
                 cites that page. Both are estimates, not measured results.
-              </p>
+              </InfoNote>
               <div className={tableWrap}>
                 <table className="w-full text-sm">
                   <thead className={thead}>

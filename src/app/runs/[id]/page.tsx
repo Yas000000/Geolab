@@ -239,7 +239,7 @@ export default async function RunPage({
             </div>
 
             <section className="mb-8">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
                 Performance by Platform
               </h2>
               <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -285,7 +285,7 @@ export default async function RunPage({
 
             {stats.brandTable.length > 0 && (
               <section className="mb-8">
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
                   Brand Visibility Comparison
                 </h2>
                 <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -328,7 +328,7 @@ export default async function RunPage({
             )}
 
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
                 Prompt-by-Prompt Results
               </h2>
               <div className="space-y-6">

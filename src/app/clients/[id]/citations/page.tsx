@@ -8,6 +8,7 @@ import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode
 import { citationTrackedRuns, siteDomain, summarizeCitations, type CitedAnswer } from "@/lib/citations";
 import { summarizeMentionBacking, type BackingCounts } from "@/lib/mention-backing";
 import { requireTab } from "@/lib/viewer";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -236,7 +237,7 @@ export default async function ClientCitationsPage({
   const ownSiteDelta = comparison ? summary.ownSitePct - comparison.ownSitePct : null;
   const card = "rounded-lg border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950";
   const cardLabel = "text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
-  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+  const sectionTitle = "mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500";
   const thead = "bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
 
   return (
@@ -337,7 +338,7 @@ export default async function ClientCitationsPage({
 
           <section className="mb-8">
             <h2 className={sectionTitle}>Most Cited Sites</h2>
-            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            <InfoNote className="mb-3">
               The sites AI answers link to as sources for this client&apos;s prompts. Share is the % of answers that
               cite the site at least once.
               {comparison
@@ -345,7 +346,7 @@ export default async function ClientCitationsPage({
                 : comparisonRange
                   ? " No Live Search answers fall in the selected Compare To period, so Change is blank."
                   : " Pick a \"Compare To\" period to see Change."}
-            </p>
+            </InfoNote>
             <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
               <table className="w-full text-sm">
                 <thead className={thead}>
@@ -429,14 +430,14 @@ export default async function ClientCitationsPage({
 
           <section className="mb-8">
             <h2 className={sectionTitle}>What Backs Your Mentions</h2>
-            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            <InfoNote className="mb-3">
               Every answer that mentions {brandName} by name or by linking your site, and the page the AI linked to
               that mention: your own site, a third-party page or nothing. Your Site counts answers that link at least
               one of your pages, even alongside others. ChatGPT, Claude and Gemini only: Perplexity doesn&apos;t say
               which source backs which part of its answer.
               {spanRuns.length > 0 &&
                 ` Based on ${spanRuns.length} Live Search crawl${spanRuns.length === 1 ? "" : "s"} in this range; crawls from before mid-November 2026 didn't save this.`}
-            </p>
+            </InfoNote>
             {platformFilter === "PERPLEXITY" ? (
               <div className={`${card} text-sm text-zinc-500 dark:text-zinc-400`}>
                 Not available for Perplexity. Pick All Models, ChatGPT, Claude or Gemini.
@@ -584,9 +585,9 @@ export default async function ClientCitationsPage({
 
           <section>
             <h2 className={sectionTitle}>Citations by Prompt</h2>
-            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            <InfoNote className="mb-3">
               For each prompt: how many answers cited your site, and the three sites cited most.
-            </p>
+            </InfoNote>
             <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
               <table className="w-full text-sm">
                 <thead className={thead}>
@@ -645,7 +646,7 @@ function AllLocations({
   return (
     <>
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Citations by Location</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">Citations by Location</h2>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {views.map((v) => {
             const delta = v.comparison ? v.summary.ownSitePct - v.comparison.ownSitePct : null;

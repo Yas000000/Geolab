@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { CompetitorManager } from "@/components/competitor-manager";
 import { requireTab } from "@/lib/viewer";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +45,10 @@ export default async function ClientCompetitorsPage({ params }: { params: Promis
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Competitors
         </h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+        <InfoNote className="mb-3">
           Feeds the Competitors table on{" "}
           <a href={`/clients/${id}/rankings`} className="underline">
             GEO Rankings
@@ -56,7 +57,7 @@ export default async function ClientCompetitorsPage({ params }: { params: Promis
           {viewer.role === "TEAM"
             ? "Competitors are also detected automatically from run results — add one here only if it should be tracked even before it shows up in a response."
             : "Competitors are picked up automatically from the brands AI answers name alongside yours."}
-        </p>
+        </InfoNote>
         <CompetitorManager
           clientId={id}
           initialCompetitors={competitors.map((c) => ({ id: c.id, name: c.name, domain: c.domain }))}

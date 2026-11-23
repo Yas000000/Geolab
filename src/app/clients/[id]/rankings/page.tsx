@@ -17,6 +17,7 @@ import { benchmarkDateGroups } from "@/lib/benchmark-dates";
 import { isLiveSearchModel } from "@/lib/citations";
 import { geoAllTimeRange, parseISODate, resolveComparisonRange, type CompareMode, type DateRange } from "@/lib/date-range";
 import { requireTab } from "@/lib/viewer";
+import { InfoNote } from "@/components/info-note";
 
 export const dynamic = "force-dynamic";
 
@@ -850,7 +851,7 @@ export default async function ClientRankingsPage({
         {header}
 
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
             Visibility by Location
           </h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -864,17 +865,17 @@ export default async function ClientRankingsPage({
         </section>
 
         <section className="mb-8">
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
             Prompt Rankings
           </h2>
-          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+          <InfoNote className="mb-3">
             Each location&apos;s answers, searched as if from there. {COMMON_NOTE} Pick a location above to see one on its own.
-          </p>
+          </InfoNote>
           <div className="space-y-8">
             {views.map((v) => (
               <div key={v.key}>
                 <h3 className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">{v.label}</h3>
-                <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{changeNote(v.data)}</p>
+                <InfoNote className="mb-3">{changeNote(v.data)}</InfoNote>
                 <PromptRankingTables data={v.data} />
               </div>
             ))}
@@ -882,7 +883,7 @@ export default async function ClientRankingsPage({
         </section>
 
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
             Competitors by Location
           </h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -926,17 +927,17 @@ export default async function ClientRankingsPage({
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Prompt Rankings
         </h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+        <InfoNote className="mb-3">
           {COMMON_NOTE} {changeNote(data)}
-        </p>
+        </InfoNote>
         <PromptRankingTables data={data} />
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Competitors
         </h2>
         {data.brandTable.length > 0 && data.rankCrawls.length > 0 && (
@@ -1251,12 +1252,12 @@ function BenchmarkBaseline({ benchmarks }: { benchmarks: DashboardData["benchmar
   if (benchmarks.length === 0) return null;
   return (
     <section className="mt-8">
-      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
         Benchmark Competitor Baseline
       </h2>
-      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <InfoNote className="mb-3">
         Competitor standing as of the baseline date (shown on the Visibility chart above).
-      </p>
+      </InfoNote>
       <div className="space-y-6">
         {benchmarks.map((snap) => (
           <div

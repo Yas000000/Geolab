@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { InfoNote } from "@/components/info-note";
 
 export interface LocationRow {
   id: string;
@@ -69,11 +70,11 @@ export function ClientLocationsPanel({ clientId, locations }: { clientId: string
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <InfoNote>
         Live Search asks each prompt once for every location it&apos;s ticked for in Tracked Prompts, as if searching from
         there, so each location costs about as much as another full Live Search. Training Search answers from the AI&apos;s
         memory and ignores locations. Every tab can show one location or all of them side by side.
-      </p>
+      </InfoNote>
 
       {locations.length > 0 ? (
         <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">

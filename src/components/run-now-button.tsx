@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { InfoNote } from "@/components/info-note";
 
 type Mode = "live" | "training";
 
@@ -68,13 +69,13 @@ export function RunNowButton({ clientId }: { clientId: string }) {
           {running === "training" ? "Running…" : "Training Search"}
         </button>
       </div>
-      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+      <InfoNote className="mt-2">
         Both re-run this client&apos;s existing tracked prompts immediately. <strong>Live Search</strong> makes each
         platform do a real web search before answering, reflecting current results, and includes Perplexity.{" "}
         <strong>Training Search</strong> answers from each model&apos;s training data only, with no web access --
         faster and cheaper, but can be stale. Perplexity always searches the web, so it isn&apos;t part of Training
         Search.
-      </p>
+      </InfoNote>
 
       {running && (
         <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">

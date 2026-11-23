@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ReportRangePicker, type DayRange } from "@/components/report-range-picker";
 import { periodError, previousPeriod, type CompareSpec } from "@/lib/report-period";
+import { InfoNote } from "@/components/info-note";
 
 export interface CompareOption {
   value: string; // "benchmark:<snapshotId>" | "firstCrawl" | "previous" | "custom"
@@ -153,7 +154,7 @@ export function GenerateReportForm({
       {overlapNote && (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">{overlapNote}</p>
       )}
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <InfoNote>
         Uses this portal&apos;s runs, citations, Google Analytics, Search Console and AI crawler data. Takes about 20 seconds
         {locations.length > 0 && !location ? " per location: All locations gives each location its own chapter, after a page comparing them side by side" : ""}.
         {isBenchmark &&
@@ -161,7 +162,7 @@ export function GenerateReportForm({
         {(isBenchmark || compare === "firstCrawl") &&
           ` Traffic is compared with the same number of days up to the ${isBenchmark ? "benchmark" : "first crawl"}.`}
         {exists ? " A report for these days is already saved: regenerating replaces it, including its written takeaways, and keeps its link." : ""}
-      </p>
+      </InfoNote>
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {error}

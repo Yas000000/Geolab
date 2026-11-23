@@ -66,7 +66,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
 
       {form && (
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
             Generate a Report
           </h2>
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">{form}</div>
@@ -74,7 +74,7 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
           Saved Reports
         </h2>
         {client.monthlyReports.length === 0 ? (
