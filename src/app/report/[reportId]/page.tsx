@@ -84,10 +84,13 @@ function EngineMove({ cell, showThen, gain }: { cell: EngineRank | undefined; sh
 }
 
 // Changes are written the way the Monthly GEO Report tool writes them: points
-// and relative change together ("+9.6 pts / +9600.0%"), counts the same way
+// and relative change together ("+9.6 pts / +27.4%"), counts the same way
 // ("+20 / +117.6%"), ranks and positions as a plain difference ("-0.3", lower
-// is better). Worked out from the figures as shown (one decimal), and a 0
-// starting point counts as 0.1 for the relative change, as in that tool.
+// is better). Worked out from the figures as shown (one decimal). From a 0
+// starting point there's no relative change, just the difference ("+18",
+// "+9.6 pts"): that tool counts 0 as 0.1, which turned 0 -> 18 visits into
+// "+17,900.0%" (dropped at the user's request, 2026-11-23; same as the
+// Traffic tab, which shows no % when the earlier figure was 0).
 type ChangeKind = "pts" | "count" | "rank";
 interface ChangeValue {
   text: string;
@@ -107,9 +110,9 @@ function change(cur: number | null | undefined, prev: number | null | undefined,
   const diff = round(c - p);
   const tone = diff === 0 ? "flat" : (kind === "rank" ? diff < 0 : diff > 0) ? "good" : "bad";
   if (kind === "rank") return { text: signed(diff, 1), tone };
-  const base = p === 0 ? (c === 0 ? null : 0.1) : p;
-  const rel = base == null ? 0 : ((c - base) / base) * 100;
-  return { text: `${signed(diff, digits)}${kind === "pts" ? `${NBSP}pts` : ""} / ${signed(rel, 1)}%`, tone };
+  const abs = `${signed(diff, digits)}${kind === "pts" ? `${NBSP}pts` : ""}`;
+  if (p === 0) return { text: abs, tone };
+  return { text: `${abs} / ${signed(((c - p) / p) * 100, 1)}%`, tone };
 }
 
 const TONE_TEXT = { good: "text-green-700", bad: "text-red-700", flat: "text-zinc-500" } as const;
