@@ -34,8 +34,8 @@ export default async function ClientCompetitorsPage({ params }: { params: Promis
       </header>
 
       {ownBrand && (
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm dark:border-blue-900 dark:bg-blue-950/40">
-          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+        <div className="mb-6 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <span className="rounded bg-brand px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
             You
           </span>
           <span className="font-medium text-zinc-900 dark:text-zinc-100">{ownBrand.name}</span>
@@ -44,7 +44,7 @@ export default async function ClientCompetitorsPage({ params }: { params: Promis
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
           Competitors
         </h2>
         <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">

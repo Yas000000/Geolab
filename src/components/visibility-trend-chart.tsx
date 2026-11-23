@@ -10,9 +10,11 @@ export interface TrendPoint {
   isBenchmark?: boolean; // a historical baseline point (see benchmark-import.ts), not a tracked run
 }
 
-const BENCHMARK_COLOR = "#a1a1aa"; // zinc-400 -- visually distinct from the real-data accent blue
+const BENCHMARK_COLOR = "#a1a1aa"; // zinc-400 -- visually distinct from the real-data accent
 
-const ACCENT = "#2563eb";
+// Interdependence red (branding, 2026-11-23; was blue). >= 3:1 on both the white card and
+// the dark surface, checked with the dataviz validator.
+const ACCENT = "#ec1912";
 const HEIGHT = 200;
 const PADDING = { top: 16, right: 16, bottom: 28, left: 36 };
 const INNER_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom;

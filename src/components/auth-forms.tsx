@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 const INPUT =
   "mt-1 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
 const BUTTON =
-  "inline-flex w-full items-center justify-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200";
+  "inline-flex w-full items-center justify-center rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50";
 const ERROR =
   "rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300";
 
@@ -163,7 +163,7 @@ export function ChangePasswordForm({ forced, minLength }: { forced: boolean; min
   );
 }
 
-export function LogoutButton() {
+export function LogoutButton({ className }: { className?: string }) {
   const [busy, setBusy] = useState(false);
   async function logout() {
     setBusy(true);
@@ -178,7 +178,10 @@ export function LogoutButton() {
       type="button"
       onClick={logout}
       disabled={busy}
-      className="font-medium text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-100"
+      className={
+        className ??
+        "font-medium text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-100"
+      }
     >
       {busy ? "Logging out…" : "Log out"}
     </button>

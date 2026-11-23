@@ -73,19 +73,21 @@ const METRICS: Record<Metric, MetricSpec> = {
 };
 const METRIC_ORDER: Metric[] = ["rank", "position", "visibility", "sov"];
 
-// Reference categorical palette (dataviz skill), slots 1-6 in fixed order.
-// Validated 2026-11-12 on this app's surfaces: light #ffffff and dark
-// zinc-950 #09090b, all checks pass (light: aqua/yellow/magenta < 3:1, so the
-// tooltip and table view carry identity too). The client brand always takes
-// slot 1; competitors follow in Competitors-table order. Literal class
-// strings so Tailwind generates them.
+// Categorical palette, slots 1-6 in fixed order. The client brand always takes
+// slot 1, the Interdependence red (branding, 2026-11-23); competitors follow in
+// Competitors-table order in the dataviz reference hues, minus orange and
+// magenta, which read too close to the brand red: blue, aqua, yellow, violet,
+// green. Validated with the dataviz skill's validator 2026-11-23 on light
+// #ffffff and dark zinc-950 #09090b: all checks pass (worst adjacent CVD
+// Delta E 9.1 light / 8.4 dark; light aqua/yellow < 3:1, so the tooltip and
+// table view carry identity too). Literal class strings so Tailwind generates them.
 const SLOTS = [
+  { stroke: "stroke-[#ec1912] dark:stroke-[#ec1912]", fill: "fill-[#ec1912] dark:fill-[#ec1912]", bg: "bg-[#ec1912] dark:bg-[#ec1912]" },
   { stroke: "stroke-[#2a78d6] dark:stroke-[#3987e5]", fill: "fill-[#2a78d6] dark:fill-[#3987e5]", bg: "bg-[#2a78d6] dark:bg-[#3987e5]" },
-  { stroke: "stroke-[#eb6834] dark:stroke-[#d95926]", fill: "fill-[#eb6834] dark:fill-[#d95926]", bg: "bg-[#eb6834] dark:bg-[#d95926]" },
   { stroke: "stroke-[#1baf7a] dark:stroke-[#199e70]", fill: "fill-[#1baf7a] dark:fill-[#199e70]", bg: "bg-[#1baf7a] dark:bg-[#199e70]" },
   { stroke: "stroke-[#eda100] dark:stroke-[#c98500]", fill: "fill-[#eda100] dark:fill-[#c98500]", bg: "bg-[#eda100] dark:bg-[#c98500]" },
-  { stroke: "stroke-[#e87ba4] dark:stroke-[#d55181]", fill: "fill-[#e87ba4] dark:fill-[#d55181]", bg: "bg-[#e87ba4] dark:bg-[#d55181]" },
-  { stroke: "stroke-[#008300] dark:stroke-[#008300]", fill: "fill-[#008300] dark:fill-[#008300]", bg: "bg-[#008300] dark:bg-[#008300]" },
+  { stroke: "stroke-[#6250d6] dark:stroke-[#9085e9]", fill: "fill-[#6250d6] dark:fill-[#9085e9]", bg: "bg-[#6250d6] dark:bg-[#9085e9]" },
+  { stroke: "stroke-[#008300] dark:stroke-[#0ca30c]", fill: "fill-[#008300] dark:fill-[#0ca30c]", bg: "bg-[#008300] dark:bg-[#0ca30c]" },
 ];
 
 const MAX_SHOWN_RANK = 10; // ranks below this sit on one ">10" row so one outlier can't squash the chart
@@ -256,7 +258,7 @@ export function CompetitorRankChart({
                 {s.name}
               </span>
               {s.isClientBrand && (
-                <span className="rounded bg-blue-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                <span className="rounded bg-brand px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-white">
                   You
                 </span>
               )}

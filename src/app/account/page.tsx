@@ -22,7 +22,7 @@ export default async function AccountPage() {
           </div>
         )}
         <section className="rounded-lg border border-zinc-200 bg-white px-4 py-5 dark:border-zinc-800 dark:bg-zinc-950">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
             {viewer.mustChangePassword ? "Choose your password" : "Change password"}
           </h2>
           <ChangePasswordForm forced={viewer.mustChangePassword} minLength={MIN_PASSWORD_LENGTH} />

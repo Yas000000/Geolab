@@ -29,7 +29,7 @@ export default async function AccessPage() {
       },
     }),
   ]);
-  const h2 = "mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
+  const h2 = "mb-1 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400";
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-black">
@@ -63,7 +63,7 @@ export default async function AccessPage() {
           <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">One shared login per client.</p>
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
                 <tr>
                   <th className="px-4 py-2 font-medium">Client</th>
                   <th className="px-4 py-2 font-medium">Login</th>
@@ -100,7 +100,7 @@ export default async function AccessPage() {
                       <td className="px-4 py-3 text-right">
                         <Link
                           href={`/access/clients/${c.id}`}
-                          className="whitespace-nowrap text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                          className="whitespace-nowrap text-xs font-medium text-brand-text hover:underline dark:text-red-400"
                         >
                           {c.login ? "Manage →" : "Set up access →"}
                         </Link>

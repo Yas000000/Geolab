@@ -23,7 +23,7 @@ const PADDING = { top: 12, right: 8, bottom: 20, left: 8 };
  */
 export function SessionCountSparkline({
   points,
-  color = "#2563eb",
+  color = "#ec1912", // Interdependence red (branding, 2026-11-23; was blue)
   height: HEIGHT = DEFAULT_HEIGHT,
 }: {
   points: SessionCountPoint[];

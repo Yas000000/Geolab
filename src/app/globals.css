@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
+  /* The brand's light tint (zinc-50 below), so a short page doesn't end in a white band. */
+  --background: #faf5f5;
   --foreground: #171717;
 }
 
@@ -10,6 +11,28 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/* Interdependence branding, matched to the GEO proposal (GEO Template 10.pptx and the
+   proposal generator's branding.py), 2026-11-23. Fonts are deliberately untouched.
+   - brand: the proposal's red (cover, corner logo tag, table header rows); the logo file
+     public/brand/interdependence-logo.jpg is this same red, so it sits on it seamlessly.
+   - brand-text: the proposal's red for text on white (links, section labels); slightly
+     deeper than brand so small text stays readable.
+   - ink: the proposal's dark bars.
+   - zinc 50/100/200 are re-tinted to the proposal's table tints (row #FAF5F5, category
+     #F0E8E8, border #E8D8D8), so every page background, card border, hover and divider
+     in the portal takes the brand's warm tint without touching each class. zinc 300 and
+     up (text, inputs, dark mode) stay the default neutral grays. */
+@theme {
+  --color-brand: #ec1912;
+  --color-brand-deep: #c81510;
+  --color-brand-text: #dc1f0d;
+  --color-brand-soft: #fdeceb;
+  --color-ink: #1e1e1e;
+  --color-zinc-50: #faf5f5;
+  --color-zinc-100: #f0e8e8;
+  --color-zinc-200: #e8d8d8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,4 +46,6 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  /* Checkboxes, radio buttons and range sliders in the brand red. */
+  accent-color: var(--color-brand);
 }

@@ -239,12 +239,12 @@ export default async function RunPage({
             </div>
 
             <section className="mb-8">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
                 Performance by Platform
               </h2>
               <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-sm">
-                  <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                  <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
                     <tr>
                       <th className="px-4 py-2 font-medium">Platform</th>
                       <th className="px-4 py-2 font-medium tabular-nums">Mentions</th>
@@ -285,12 +285,12 @@ export default async function RunPage({
 
             {stats.brandTable.length > 0 && (
               <section className="mb-8">
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
                   Brand Visibility Comparison
                 </h2>
                 <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                   <table className="w-full text-sm">
-                    <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                    <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
                       <tr>
                         <th className="px-4 py-2 font-medium">Brand</th>
                         <th className="px-4 py-2 font-medium tabular-nums">Appearances</th>
@@ -303,14 +303,14 @@ export default async function RunPage({
                           key={b.name}
                           className={
                             b.isClientBrand
-                              ? "bg-blue-50 dark:bg-blue-950/40"
+                              ? "bg-brand-soft dark:bg-red-950/40"
                               : "bg-white dark:bg-zinc-950"
                           }
                         >
                           <td className="px-4 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                             {b.name}
                             {b.isClientBrand && (
-                              <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              <span className="ml-2 rounded bg-brand px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                                 Client
                               </span>
                             )}
@@ -328,7 +328,7 @@ export default async function RunPage({
             )}
 
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
                 Prompt-by-Prompt Results
               </h2>
               <div className="space-y-6">
@@ -338,13 +338,13 @@ export default async function RunPage({
                   .filter(([, prompts]) => prompts.length > 0)
                   .map(([category, prompts]) => (
                   <div key={`${locationId}:${category}`}>
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-text dark:text-red-400">
                       {located && <span className="text-zinc-600 dark:text-zinc-300">{location?.label ?? "No location"} · </span>}
                       {CATEGORY_LABEL[category] ?? category}
                     </h3>
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                       <table className="w-full text-sm">
-                        <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                        <thead className="bg-brand text-left text-xs uppercase tracking-wide text-white">
                           <tr>
                             <th className="px-4 py-2 font-medium">Prompt</th>
                             {platforms.map((p) => (

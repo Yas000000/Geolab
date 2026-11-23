@@ -55,7 +55,7 @@ export function RunNowButton({ clientId }: { clientId: string }) {
           type="button"
           onClick={() => handleRun("live")}
           disabled={running !== null}
-          className="inline-flex items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+          className="inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running === "live" ? "Running…" : "Live Search"}
         </button>
@@ -77,7 +77,7 @@ export function RunNowButton({ clientId }: { clientId: string }) {
       </p>
 
       {running && (
-        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+        <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
           Running the prompts across all tracked platforms{running === "live" ? " with live web search" : ""}… this
           usually takes {running === "live" ? "3-10" : "1-3"} minutes.
         </div>
