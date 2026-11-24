@@ -390,6 +390,12 @@ model AiTrafficSnapshot {
   siteEngagedSessions         Int?
   aiIntroducedKeyEvents       Int?
   aiKeyEventsByName           Json? // { "contact_us_form_submit_patient": 1 }; null when none
+  // Direct's own key events, engaged sessions and first-visit (introduced) key events, for
+  // the Direct AI estimate (DIRECT_AI_SHARE_ESTIMATE) the user had folded into AI
+  // Conversions (2026-11-23). Raw Direct figures; the estimate is applied at render time.
+  directKeyEvents             Int?
+  directEngagedSessions       Int?
+  directIntroducedKeyEvents   Int?
   createdAt             DateTime @default(now())
 
   @@unique([clientId, date])

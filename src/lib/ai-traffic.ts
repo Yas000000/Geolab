@@ -31,6 +31,10 @@ export interface AiConversionBreakdown {
   siteEngagedSessions: number;
   aiIntroducedKeyEvents: number;
   aiKeyEventsByName: Record<string, number>;
+  /** Direct's own figures, for the Direct AI estimate (applied at render time, never stored as AI). */
+  directKeyEvents: number;
+  directEngagedSessions: number;
+  directIntroducedKeyEvents: number;
 }
 
 export type AiTrafficDay = AiTrafficBreakdown & AiConversionBreakdown;
@@ -160,6 +164,9 @@ export async function fetchAiTrafficDailySeries(
           siteEngagedSessions: 0,
           aiIntroducedKeyEvents: 0,
           aiKeyEventsByName: {},
+          directKeyEvents: 0,
+          directEngagedSessions: 0,
+          directIntroducedKeyEvents: 0,
         };
         series.set(key, e);
       }
@@ -175,6 +182,8 @@ export async function fetchAiTrafficDailySeries(
       switch (row.dimensionValues?.[1]?.value) {
         case "Direct":
           e.directSessions = sessions;
+          e.directKeyEvents = metric(row, 1);
+          e.directEngagedSessions = metric(row, 2);
           break;
         case "AI Assistant":
           e.aiAssistantSessions = sessions;
@@ -261,7 +270,8 @@ export async function fetchAiTrafficDailySeries(
     }
 
     // AI-introduced: key events by people whose first visit came from an AI platform,
-    // credited on the day they converted, whichever way that later visit came in.
+    // credited on the day they converted, whichever way that later visit came in. Also
+    // those whose first visit was Direct, for the Direct AI estimate.
     const anySiteKeyEvents = [...series.values()].some((e) => e.siteKeyEvents > 0);
     if (anySiteKeyEvents) {
       const firstRows = await runReportAllRows(client, {
@@ -269,13 +279,13 @@ export async function fetchAiTrafficDailySeries(
         dateRanges,
         dimensions: [{ name: "date" }, { name: "firstUserDefaultChannelGroup" }, { name: "firstUserSource" }, { name: "firstUserMedium" }],
         metrics: [{ name: "keyEvents" }],
-        dimensionFilter: { filter: { fieldName: "firstUserDefaultChannelGroup", inListFilter: { values: AI_CHANNELS } } },
+        dimensionFilter: { filter: { fieldName: "firstUserDefaultChannelGroup", inListFilter: { values: [...AI_CHANNELS, "Direct"] } } },
         metricFilter: hasKeyEvents,
       });
       for (const row of firstRows) {
         const [, channel, source, medium] = (row.dimensionValues ?? []).map((d) => d.value);
-        if (!isAiVisit(channel, source, medium)) continue;
-        entry(day(row)).aiIntroducedKeyEvents += metric(row, 0);
+        if (channel === "Direct") entry(day(row)).directIntroducedKeyEvents += metric(row, 0);
+        else if (isAiVisit(channel, source, medium)) entry(day(row)).aiIntroducedKeyEvents += metric(row, 0);
       }
     }
 
@@ -427,10 +437,19 @@ export async function fetchCountryTrafficDailySeries(
  */
 export const DIRECT_AI_SHARE_ESTIMATE = { low: 0.21, mid: 0.34, high: 0.47 };
 
-export function estimateDirectAiSessions(directSessions: number) {
+/**
+ * The Direct AI share applied to any Direct count -- visits, or (AI Conversions,
+ * 2026-11-23) Direct's key events, which assumes AI-referred Direct visitors convert at
+ * Direct's own rate. Low/mid/high, rounded.
+ */
+export function estimateDirectAi(directCount: number) {
   return {
-    low: Math.round(directSessions * DIRECT_AI_SHARE_ESTIMATE.low),
-    mid: Math.round(directSessions * DIRECT_AI_SHARE_ESTIMATE.mid),
-    high: Math.round(directSessions * DIRECT_AI_SHARE_ESTIMATE.high),
+    low: Math.round(directCount * DIRECT_AI_SHARE_ESTIMATE.low),
+    mid: Math.round(directCount * DIRECT_AI_SHARE_ESTIMATE.mid),
+    high: Math.round(directCount * DIRECT_AI_SHARE_ESTIMATE.high),
   };
+}
+
+export function estimateDirectAiSessions(directSessions: number) {
+  return estimateDirectAi(directSessions);
 }

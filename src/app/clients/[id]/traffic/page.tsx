@@ -10,7 +10,7 @@ import {
   type CompareMode,
   type DateRange,
 } from "@/lib/date-range";
-import { estimateDirectAiSessions } from "@/lib/ai-traffic";
+import { estimateDirectAi, estimateDirectAiSessions } from "@/lib/ai-traffic";
 import { requireTab } from "@/lib/viewer";
 import { InfoNote } from "@/components/info-note";
 
@@ -104,7 +104,8 @@ function totals(view: TrafficView) {
  * visits included, so the rates compare like with like).
  */
 function conversionTotals(view: TrafficView) {
-  const days = view.filter((d) => d.aiAssistantKeyEvents != null);
+  // directKeyEvents is the newest field, so a day that has it has every conversion figure.
+  const days = view.filter((d) => d.directKeyEvents != null);
   const sum = (f: (d: AiDay) => number | null) => days.reduce((acc, d) => acc + (f(d) ?? 0), 0);
   const byName = new Map<string, number>();
   for (const d of days) {
@@ -114,15 +115,30 @@ function conversionTotals(view: TrafficView) {
   const aiAssistant = sum((d) => d.aiAssistantKeyEvents);
   const referralAi = sum((d) => d.referralAiKeyEvents);
   const unassignedAi = sum((d) => d.unassignedAiKeyEvents);
+  const inAiVisits = aiAssistant + referralAi + unassignedAi;
+  const aiVisits = sum((d) => (d.aiAssistantSessions ?? 0) + (d.referralAiSessions ?? 0) + (d.unassignedAiSessions ?? 0));
+  const introduced = sum((d) => d.aiIntroducedKeyEvents);
+  // The Direct AI estimate (the Direct box's 34%, 21% to 47%), applied to Direct's own
+  // visits and conversions and folded into the measured figures (user, 2026-11-23).
+  const directVisits = estimateDirectAi(sum((d) => d.directSessions));
+  const directConversions = estimateDirectAi(sum((d) => d.directKeyEvents));
+  const directIntroduced = estimateDirectAi(sum((d) => d.directIntroducedKeyEvents));
   return {
     days: days.length,
     aiAssistant,
     referralAi,
     unassignedAi,
-    inAiVisits: aiAssistant + referralAi + unassignedAi,
-    aiVisits: sum((d) => (d.aiAssistantSessions ?? 0) + (d.referralAiSessions ?? 0) + (d.unassignedAiSessions ?? 0)),
+    inAiVisits,
+    aiVisits,
     aiEngaged: sum((d) => (d.aiAssistantEngagedSessions ?? 0) + (d.referralAiEngagedSessions ?? 0) + (d.unassignedAiEngagedSessions ?? 0)),
-    introduced: sum((d) => d.aiIntroducedKeyEvents),
+    introduced,
+    directVisits,
+    directConversions,
+    directIntroduced,
+    // Measured + estimated Direct; the low/high ends use the estimate's range.
+    totalConversions: { low: inAiVisits + directConversions.low, mid: inAiVisits + directConversions.mid, high: inAiVisits + directConversions.high },
+    totalVisits: aiVisits + directVisits.mid,
+    totalIntroduced: { low: introduced + directIntroduced.low, mid: introduced + directIntroduced.mid, high: introduced + directIntroduced.high },
     siteSessions: sum((d) => d.siteSessions),
     siteKeyEvents: sum((d) => d.siteKeyEvents),
     siteEngaged: sum((d) => d.siteEngagedSessions),
@@ -344,23 +360,29 @@ function TrafficSections({ view, prev: p, showConversions }: { view: TrafficView
 }
 
 /**
- * AI Conversions (Settings switch, 2026-11-23): key events from the three measured AI
- * sources, key events by people who first came from AI, and how engaged AI visits were,
- * each against the whole site and the Compare To period.
+ * AI Conversions (Settings switch, 2026-11-23): key events from AI traffic, key events by
+ * people who first came from AI, and how engaged AI visits were, each against the whole
+ * site and the Compare To period. The two conversion figures are the three measured AI
+ * sources plus the Direct AI estimate (the user's call, 2026-11-23: the Direct box's 34%,
+ * 21% to 47%, applied to Direct's own conversions); engagement stays measured-only.
  */
 function AiConversionsSection({ c, prev }: { c: ConversionTotals; prev: ConversionTotals | null }) {
   const p = prev && prev.days > 0 ? prev : null;
   const aiRate = pctOf(c.inAiVisits, c.aiVisits);
+  const totalRate = pctOf(c.totalConversions.mid, c.totalVisits);
   const siteRate = pctOf(c.siteKeyEvents, c.siteSessions);
   const aiEngagement = pctOf(c.aiEngaged, c.aiVisits);
   const siteEngagement = pctOf(c.siteEngaged, c.siteSessions);
+  const range = (r: { low: number; high: number }) => `${r.low.toLocaleString()} to ${r.high.toLocaleString()}`;
   return (
     <section className="mt-8">
       <h2 className={`mb-1 ${sectionTitle}`}>AI Conversions</h2>
       <InfoNote className="mb-4">
-        Conversions are the key events set up in this client&apos;s Google Analytics, such as form submits and calls. They come
-        from the three measured AI sources above; Direct visits can&apos;t be told apart, so they aren&apos;t included. Google
-        Analytics only counts an event as a key event from the day it was marked as one.
+        Conversions are the key events set up in this client&apos;s Google Analytics, such as form submits and calls. The
+        conversion figures add an estimate for Direct to the three measured AI sources above: the same share of Direct as the
+        Direct box (34%, within a range of 21% to 47%), applied to Direct&apos;s own conversions. That assumes AI visitors who
+        arrive as Direct convert at Direct&apos;s usual rate, so figures marked ~ are estimates. Engagement uses the measured AI
+        visits only. Google Analytics only counts an event as a key event from the day it was marked as one.
       </InfoNote>
       {c.days === 0 ? (
         <div className={emptyBox}>Conversion data for this range hasn&apos;t been pulled yet.</div>
@@ -374,17 +396,23 @@ function AiConversionsSection({ c, prev }: { c: ConversionTotals; prev: Conversi
           )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <ConversionCard
+              estimated
               label="From AI visits"
-              description="Key events that happened during a visit from an AI platform."
-              value={c.inAiVisits.toLocaleString()}
-              change={<Change cur={c.inAiVisits} prev={p?.inAiVisits} />}
+              description="Key events that happened during a visit from an AI platform, measured plus the Direct estimate."
+              value={`~${c.totalConversions.mid.toLocaleString()}`}
+              change={<Change cur={c.totalConversions.mid} prev={p?.totalConversions.mid} approx />}
             >
               <div>
-                {fmtPct(aiRate)} of {c.aiVisits.toLocaleString()} AI visits; site average {fmtPct(siteRate)}
+                Range {range(c.totalConversions)}: {c.inAiVisits.toLocaleString()} measured + ~{c.directConversions.mid.toLocaleString()}{" "}
+                estimated from Direct
               </div>
               <div>
-                AI Assistant {c.aiAssistant.toLocaleString()} · Referral (AI) {c.referralAi.toLocaleString()} · Unassigned (AI){" "}
-                {c.unassignedAi.toLocaleString()}
+                ~{fmtPct(totalRate)} of ~{c.totalVisits.toLocaleString()} AI visits; measured alone {fmtPct(aiRate)} of{" "}
+                {c.aiVisits.toLocaleString()}; site average {fmtPct(siteRate)}
+              </div>
+              <div>
+                Measured: AI Assistant {c.aiAssistant.toLocaleString()} · Referral (AI) {c.referralAi.toLocaleString()} · Unassigned
+                (AI) {c.unassignedAi.toLocaleString()}
               </div>
               {c.byName.length > 0 && (
                 <ul className="mt-1.5 space-y-0.5">
@@ -398,14 +426,20 @@ function AiConversionsSection({ c, prev }: { c: ConversionTotals; prev: Conversi
               )}
             </ConversionCard>
             <ConversionCard
+              estimated
               label="AI-introduced"
-              description="Key events by people whose first visit came from an AI platform, counted when they converted, even on a later visit that came another way."
-              value={c.introduced.toLocaleString()}
-              change={<Change cur={c.introduced} prev={p?.introduced} />}
-            />
+              description="Key events by people whose first visit came from an AI platform, counted when they converted, even on a later visit that came another way. Measured plus the Direct estimate."
+              value={`~${c.totalIntroduced.mid.toLocaleString()}`}
+              change={<Change cur={c.totalIntroduced.mid} prev={p?.totalIntroduced.mid} approx />}
+            >
+              <div>
+                Range {range(c.totalIntroduced)}: {c.introduced.toLocaleString()} measured + ~{c.directIntroduced.mid.toLocaleString()}{" "}
+                estimated from people who first arrived as Direct
+              </div>
+            </ConversionCard>
             <ConversionCard
               label="AI visit engagement"
-              description="Share of AI visits Google Analytics counts as engaged: 10 seconds or longer, two or more pages, or a key event."
+              description="Share of the measured AI visits Google Analytics counts as engaged: 10 seconds or longer, two or more pages, or a key event."
               value={fmtPct(aiEngagement)}
               change={<ChangePts cur={aiEngagement} prev={p ? pctOf(p.aiEngaged, p.aiVisits) : null} />}
             >
@@ -441,16 +475,25 @@ function ConversionCard({
   value,
   change,
   children,
+  estimated,
 }: {
   label: string;
   description: string;
   value: string;
   change: React.ReactNode;
   children?: React.ReactNode;
+  estimated?: boolean; // includes the Direct estimate: the same "estimated" tag as the Direct box
 }) {
   return (
     <div className="min-w-0 rounded-lg border border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="text-sm font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">{label}</div>
+      <div className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+        {label}
+        {estimated && (
+          <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            estimated
+          </span>
+        )}
+      </div>
       <p className="mt-1 text-sm leading-snug text-zinc-500 dark:text-zinc-400">{description}</p>
       <div className="mt-3 text-4xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">{value}</div>
       {change}
