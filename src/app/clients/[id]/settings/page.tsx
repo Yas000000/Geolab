@@ -55,6 +55,7 @@ async function getClient(id: string) {
       domain: true,
       schedule: true,
       scheduledLiveSearch: true,
+      showAiConversions: true,
       locations: { orderBy: { position: "asc" }, include: { _count: { select: { rawResponses: true } } } },
       ga4PropertyId: true,
       gscSiteUrl: true,
@@ -143,6 +144,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             initialGa4PropertyId={client.ga4PropertyId ?? ""}
             initialGscSiteUrl={client.gscSiteUrl ?? ""}
             initialScheduledLiveSearch={client.scheduledLiveSearch}
+            initialShowAiConversions={client.showAiConversions}
           />
           {analyticsCoverage && (
             <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-900">

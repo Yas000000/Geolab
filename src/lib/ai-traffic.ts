@@ -12,6 +12,41 @@ export interface AiTrafficBreakdown {
 }
 
 /**
+ * AI Conversions (2026-11-23): key events (GA4's conversions) and engaged sessions in the
+ * same AI visits as the breakdown above, counted the same way (the session's channel, plus
+ * the Referral/Unassigned AI drill-down); the whole site's totals for the averages; key
+ * events by people whose FIRST visit came from an AI platform, whenever and however they
+ * later converted (firstUser* dimensions, same AI matching); and the in-visit AI key events
+ * by event name. Key events only count from the day an event was marked as one in GA4.
+ */
+export interface AiConversionBreakdown {
+  aiAssistantKeyEvents: number;
+  referralAiKeyEvents: number;
+  unassignedAiKeyEvents: number;
+  aiAssistantEngagedSessions: number;
+  referralAiEngagedSessions: number;
+  unassignedAiEngagedSessions: number;
+  siteSessions: number;
+  siteKeyEvents: number;
+  siteEngagedSessions: number;
+  aiIntroducedKeyEvents: number;
+  aiKeyEventsByName: Record<string, number>;
+}
+
+export type AiTrafficDay = AiTrafficBreakdown & AiConversionBreakdown;
+
+/** The three channels that hold measurable AI visits (Direct can't be told apart). */
+const AI_CHANNELS = ["AI Assistant", "Referral", "Unassigned"];
+
+/** Whether a channel/source/medium combination is an AI visit, the way this file counts them. */
+function isAiVisit(channel: string | null | undefined, source: string | null | undefined, medium: string | null | undefined): boolean {
+  if (channel === "AI Assistant") return true;
+  if (channel === "Referral") return matchesAiPlatform(source);
+  if (channel === "Unassigned") return matchesAiPlatform(source) || matchesAiPlatform(medium);
+  return false;
+}
+
+/**
  * Known AI platform identifiers, matched with a word-boundary regex per
  * entry -- NEVER String.includes(). A bare substring check against "you.com"
  * false-positived on "sportsyou.com" (a real client's genuine, unrelated
@@ -45,8 +80,11 @@ function matchesAiPlatform(value: string | null | undefined): boolean {
 }
 
 /**
- * Three GA4 Data API calls for one client/range, each split by day (`date`
- * dimension), keyed "YYYY-MM-DD": the native channel-group totals
+ * Up to five GA4 Data API calls for one client/range: three for the visits
+ * (each also returning key events and engaged sessions for AI Conversions,
+ * see AiConversionBreakdown), then, only when there's something to find, one
+ * for the AI key events by event name and one for AI-introduced key events.
+ * Each split by day (`date` dimension), keyed "YYYY-MM-DD": the native channel-group totals
  * (Direct/AI Assistant/Referral/Unassigned, confirmed live to be real enum
  * values returned by sessionDefaultChannelGroup -- an earlier doc summary
  * wrongly claimed they weren't), then a drill-down into Referral's sources
@@ -78,24 +116,29 @@ export async function fetchAiTrafficDailySeries(
   propertyId: string,
   startDate: Date,
   endDate: Date,
-): Promise<Map<string, AiTrafficBreakdown>> {
+): Promise<Map<string, AiTrafficDay>> {
   try {
     const client = new BetaAnalyticsDataClient({ authClient });
     const property = normalizeGa4PropertyId(propertyId);
     const dateRanges = [{ startDate: toApiDate(startDate), endDate: toApiDate(endDate) }];
     const day = (row: { dimensionValues?: { value?: string | null }[] | null }) =>
       ga4DayKey(row.dimensionValues?.[0]?.value ?? "");
-    const sessionsOf = (row: { metricValues?: { value?: string | null }[] | null }) =>
-      parseInt(row.metricValues?.[0]?.value ?? "0", 10);
+    // Metric i of a row, rounded: sessions, then key events and engaged sessions where asked for.
+    const metric = (row: { metricValues?: { value?: string | null }[] | null }, i: number) =>
+      Math.round(Number(row.metricValues?.[i]?.value ?? "0") || 0);
+    const sessionsOf = (row: { metricValues?: { value?: string | null }[] | null }) => metric(row, 0);
+    // Sessions, key events and engaged sessions, in that order, on every visit query.
+    const visitMetrics = [{ name: "sessions" }, { name: "keyEvents" }, { name: "engagedSessions" }];
+    const hasKeyEvents = { filter: { fieldName: "keyEvents", numericFilter: { operation: "GREATER_THAN" as const, value: { doubleValue: 0 } } } };
 
     const channelRows = await runReportAllRows(client, {
       property,
       dateRanges,
       dimensions: [{ name: "date" }, { name: "sessionDefaultChannelGroup" }],
-      metrics: [{ name: "sessions" }],
+      metrics: visitMetrics,
     });
 
-    const series = new Map<string, AiTrafficBreakdown>();
+    const series = new Map<string, AiTrafficDay>();
     const entry = (key: string) => {
       let e = series.get(key);
       if (!e) {
@@ -106,6 +149,17 @@ export async function fetchAiTrafficDailySeries(
           referralAiSessions: 0,
           unassignedSessions: 0,
           unassignedAiSessions: 0,
+          aiAssistantKeyEvents: 0,
+          referralAiKeyEvents: 0,
+          unassignedAiKeyEvents: 0,
+          aiAssistantEngagedSessions: 0,
+          referralAiEngagedSessions: 0,
+          unassignedAiEngagedSessions: 0,
+          siteSessions: 0,
+          siteKeyEvents: 0,
+          siteEngagedSessions: 0,
+          aiIntroducedKeyEvents: 0,
+          aiKeyEventsByName: {},
         };
         series.set(key, e);
       }
@@ -114,12 +168,18 @@ export async function fetchAiTrafficDailySeries(
     for (const row of channelRows) {
       const e = entry(day(row));
       const sessions = sessionsOf(row);
+      // Every session has exactly one channel, so the channels add up to the whole site.
+      e.siteSessions += sessions;
+      e.siteKeyEvents += metric(row, 1);
+      e.siteEngagedSessions += metric(row, 2);
       switch (row.dimensionValues?.[1]?.value) {
         case "Direct":
           e.directSessions = sessions;
           break;
         case "AI Assistant":
           e.aiAssistantSessions = sessions;
+          e.aiAssistantKeyEvents = metric(row, 1);
+          e.aiAssistantEngagedSessions = metric(row, 2);
           break;
         case "Referral":
           e.referralSessions = sessions;
@@ -136,7 +196,7 @@ export async function fetchAiTrafficDailySeries(
         property,
         dateRanges,
         dimensions: [{ name: "date" }, { name: "sessionSource" }],
-        metrics: [{ name: "sessions" }],
+        metrics: visitMetrics,
         dimensionFilter: {
           filter: {
             fieldName: "sessionDefaultChannelGroup",
@@ -148,6 +208,8 @@ export async function fetchAiTrafficDailySeries(
         if (matchesAiPlatform(row.dimensionValues?.[1]?.value)) {
           const e = entry(day(row));
           e.referralAiSessions = (e.referralAiSessions ?? 0) + sessionsOf(row);
+          e.referralAiKeyEvents += metric(row, 1);
+          e.referralAiEngagedSessions += metric(row, 2);
         }
       }
     }
@@ -158,7 +220,7 @@ export async function fetchAiTrafficDailySeries(
         property,
         dateRanges,
         dimensions: [{ name: "date" }, { name: "sessionSource" }, { name: "sessionMedium" }],
-        metrics: [{ name: "sessions" }],
+        metrics: visitMetrics,
         dimensionFilter: {
           filter: {
             fieldName: "sessionDefaultChannelGroup",
@@ -171,7 +233,49 @@ export async function fetchAiTrafficDailySeries(
         if (matchesAiPlatform(row.dimensionValues?.[1]?.value) || matchesAiPlatform(row.dimensionValues?.[2]?.value)) {
           const e = entry(day(row));
           e.unassignedAiSessions = (e.unassignedAiSessions ?? 0) + sessionsOf(row);
+          e.unassignedAiKeyEvents += metric(row, 1);
+          e.unassignedAiEngagedSessions += metric(row, 2);
         }
+      }
+    }
+
+    // Which key events the AI visits produced, by event name (only asked when there were any).
+    const anyAiKeyEvents = [...series.values()].some(
+      (e) => e.aiAssistantKeyEvents + e.referralAiKeyEvents + e.unassignedAiKeyEvents > 0,
+    );
+    if (anyAiKeyEvents) {
+      const eventRows = await runReportAllRows(client, {
+        property,
+        dateRanges,
+        dimensions: [{ name: "date" }, { name: "eventName" }, { name: "sessionDefaultChannelGroup" }, { name: "sessionSource" }, { name: "sessionMedium" }],
+        metrics: [{ name: "keyEvents" }],
+        dimensionFilter: { filter: { fieldName: "sessionDefaultChannelGroup", inListFilter: { values: AI_CHANNELS } } },
+        metricFilter: hasKeyEvents,
+      });
+      for (const row of eventRows) {
+        const [, name, channel, source, medium] = (row.dimensionValues ?? []).map((d) => d.value);
+        if (!name || !isAiVisit(channel, source, medium)) continue;
+        const e = entry(day(row));
+        e.aiKeyEventsByName[name] = (e.aiKeyEventsByName[name] ?? 0) + metric(row, 0);
+      }
+    }
+
+    // AI-introduced: key events by people whose first visit came from an AI platform,
+    // credited on the day they converted, whichever way that later visit came in.
+    const anySiteKeyEvents = [...series.values()].some((e) => e.siteKeyEvents > 0);
+    if (anySiteKeyEvents) {
+      const firstRows = await runReportAllRows(client, {
+        property,
+        dateRanges,
+        dimensions: [{ name: "date" }, { name: "firstUserDefaultChannelGroup" }, { name: "firstUserSource" }, { name: "firstUserMedium" }],
+        metrics: [{ name: "keyEvents" }],
+        dimensionFilter: { filter: { fieldName: "firstUserDefaultChannelGroup", inListFilter: { values: AI_CHANNELS } } },
+        metricFilter: hasKeyEvents,
+      });
+      for (const row of firstRows) {
+        const [, channel, source, medium] = (row.dimensionValues ?? []).map((d) => d.value);
+        if (!isAiVisit(channel, source, medium)) continue;
+        entry(day(row)).aiIntroducedKeyEvents += metric(row, 0);
       }
     }
 

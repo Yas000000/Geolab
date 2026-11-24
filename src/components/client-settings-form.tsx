@@ -13,15 +13,18 @@ export function ClientSettingsForm({
   initialGa4PropertyId,
   initialGscSiteUrl,
   initialScheduledLiveSearch,
+  initialShowAiConversions,
 }: {
   clientId: string;
   initialSchedule: ScheduleValue;
   initialGa4PropertyId: string;
   initialGscSiteUrl: string;
   initialScheduledLiveSearch: boolean;
+  initialShowAiConversions: boolean;
 }) {
   const [schedule, setSchedule] = useState(initialSchedule);
   const [scheduledLiveSearch, setScheduledLiveSearch] = useState(initialScheduledLiveSearch);
+  const [showAiConversions, setShowAiConversions] = useState(initialShowAiConversions);
   const [ga4PropertyId, setGa4PropertyId] = useState(initialGa4PropertyId);
   const [gscSiteUrl, setGscSiteUrl] = useState(initialGscSiteUrl);
   const [saving, setSaving] = useState(false);
@@ -64,7 +67,13 @@ export function ClientSettingsForm({
       const res = await fetch(`/api/clients/${clientId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schedule, scheduledLiveSearch, ga4PropertyId: ga4PropertyId || null, gscSiteUrl: gscSiteUrl || null }),
+        body: JSON.stringify({
+          schedule,
+          scheduledLiveSearch,
+          showAiConversions,
+          ga4PropertyId: ga4PropertyId || null,
+          gscSiteUrl: gscSiteUrl || null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -125,6 +134,20 @@ export function ClientSettingsForm({
               placeholder="Not set"
             />
           )}
+          {/* AI Conversions on GEO Traffic (2026-11-23): key events from AI traffic, pulled for
+              every client either way, so switching this on shows history straight away. */}
+          <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={showAiConversions}
+              onChange={(e) => setShowAiConversions(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+            />
+            Show AI conversions on GEO Traffic
+          </label>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Key events (conversions) from AI traffic, using the key events set up in this client&apos;s Google Analytics.
+          </p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">GSC Site URL</label>

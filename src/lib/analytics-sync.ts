@@ -1,6 +1,6 @@
 import type { OAuth2Client } from "google-auth-library";
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { fetchGa4DailySeries, fetchGscDailySeries } from "@/lib/google-metrics";
 import { fetchAiTrafficDailySeries, fetchCountryTrafficDailySeries } from "@/lib/ai-traffic";
 import { getGoogleOAuthClient, isAuthError, GOOGLE_CONNECTION_ID } from "@/lib/google-oauth";
@@ -118,12 +118,14 @@ export async function syncClientAnalytics(
 
     const ai = await fetchAiTrafficDailySeries(oauthClient, client.ga4PropertyId, ga4Start, endDate);
     await upsertInBatches(
-      [...ai].map(([key, breakdown]) => {
+      [...ai].map(([key, { aiKeyEventsByName, ...counts }]) => {
         const date = dayToDate(key);
+        // No AI key events that day: stored as null, which also clears a stale list on re-sync.
+        const data = { ...counts, aiKeyEventsByName: Object.keys(aiKeyEventsByName).length ? aiKeyEventsByName : Prisma.DbNull };
         return prisma.aiTrafficSnapshot.upsert({
           where: { clientId_date: { clientId, date } },
-          create: { clientId, date, ...breakdown },
-          update: breakdown,
+          create: { clientId, date, ...data },
+          update: data,
         });
       }),
     );

@@ -16,6 +16,8 @@ interface PatchBody {
   gscSiteUrl?: string | null;
   /** Scheduled runs are Live Search (true) or Training Search (false). */
   scheduledLiveSearch?: boolean;
+  /** GEO Traffic shows the AI Conversions section. */
+  showAiConversions?: boolean;
   /** Settings > Archive or Delete: true archives the client, false restores it. Sent on its own. */
   archived?: boolean;
 }
@@ -48,6 +50,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
       ga4PropertyId: body.ga4PropertyId === undefined ? undefined : body.ga4PropertyId || null,
       gscSiteUrl: body.gscSiteUrl === undefined ? undefined : body.gscSiteUrl || null,
       scheduledLiveSearch: typeof body.scheduledLiveSearch === "boolean" ? body.scheduledLiveSearch : undefined,
+      showAiConversions: typeof body.showAiConversions === "boolean" ? body.showAiConversions : undefined,
     },
   });
 

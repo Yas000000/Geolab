@@ -64,6 +64,11 @@ model Client {
   // multi-location clients get monthly Live Searches instead, since only
   // Live Search can ask as if from a location (user, 2026-11-18).
   scheduledLiveSearch Boolean @default(false)
+
+  // Settings switch for the GEO Traffic tab's AI Conversions section (key events from AI
+  // traffic). Off by default; the figures are pulled for every client either way, so
+  // switching it on shows history straight away (user, 2026-11-23).
+  showAiConversions Boolean @default(false)
 }
 
 // A place a client is tracked in (MacuMira: Canada, Australia, New Zealand).
@@ -370,6 +375,21 @@ model AiTrafficSnapshot {
   referralAiSessions    Int?
   unassignedSessions    Int?
   unassignedAiSessions  Int?
+  // AI Conversions (2026-11-23, src/lib/ai-traffic.ts). Null = not pulled yet for that day.
+  // Key events (GA4's conversions) and engaged sessions in the visits counted above, the
+  // whole site's totals for the averages, key events by people whose first visit came from
+  // an AI platform (whenever they converted), and the in-visit key events by event name.
+  aiAssistantKeyEvents        Int?
+  referralAiKeyEvents         Int?
+  unassignedAiKeyEvents       Int?
+  aiAssistantEngagedSessions  Int?
+  referralAiEngagedSessions   Int?
+  unassignedAiEngagedSessions Int?
+  siteSessions                Int?
+  siteKeyEvents               Int?
+  siteEngagedSessions         Int?
+  aiIntroducedKeyEvents       Int?
+  aiKeyEventsByName           Json? // { "contact_us_form_submit_patient": 1 }; null when none
   createdAt             DateTime @default(now())
 
   @@unique([clientId, date])
