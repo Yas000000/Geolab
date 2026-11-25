@@ -6,7 +6,7 @@ import Link from "next/link";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
 import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
 import { SCHEDULE_OPTIONS, type ScheduleValue } from "@/lib/schedule-options";
-import { OTHER_NAMES_HINT } from "@/lib/client-names";
+import { EXACT_MATCH_HINT, OTHER_NAMES_HINT } from "@/lib/client-names";
 
 // A place the client is tracked in; Live Search asks each prompt once per location it's ticked for.
 interface LocationDraft {
@@ -49,6 +49,7 @@ export default function NewClientPage() {
   const [brandName, setBrandName] = useState("");
   const [domain, setDomain] = useState("");
   const [otherNames, setOtherNames] = useState("");
+  const [exactNameMatch, setExactNameMatch] = useState(false);
   const [promptsText, setPromptsText] = useState("");
   const [schedule, setSchedule] = useState<ScheduleValue>("MANUAL");
   const [ga4PropertyId, setGa4PropertyId] = useState("");
@@ -102,6 +103,7 @@ export default function NewClientPage() {
           brandName,
           domain,
           otherNames,
+          exactNameMatch,
           promptsText,
           schedule,
           ga4PropertyId: ga4PropertyId || undefined,
@@ -172,7 +174,7 @@ export default function NewClientPage() {
             </Field>
           </div>
 
-          <Field label="Other Names" hint={OTHER_NAMES_HINT}>
+          <Field label="Other Names">
             <input
               type="text"
               value={otherNames}
@@ -180,6 +182,17 @@ export default function NewClientPage() {
               className={inputClass}
               placeholder="Acme"
             />
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{OTHER_NAMES_HINT}</p>
+            <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={exactNameMatch}
+                onChange={(e) => setExactNameMatch(e.target.checked)}
+                className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+              />
+              Match the name exactly
+            </label>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{EXACT_MATCH_HINT}</p>
           </Field>
 
           <Field

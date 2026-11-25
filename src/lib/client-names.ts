@@ -42,14 +42,42 @@ export function cleanOtherNames(input: unknown, brandName: string): string[] | s
   return names;
 }
 
+export const EXACT_MATCH_HINT =
+  "Count the brand name and other names only as whole words with the same capitals. Use it when the name is " +
+  "part of other brands or ordinary words: for a brand called \"Spark\", \"SparkPost\" and \"spark plugs\" then " +
+  "don't count. The domain still counts however it's written.";
+
 /**
  * Every name the pipeline's parser should count as the client besides the brand name:
- * the other names, plus the bare domain ("alacoladder.com") when the brand name isn't
- * already part of it, since the client's domain written in an answer is a mention too.
+ * the other names, plus the bare domain ("alacoladder.com"), since the client's domain
+ * written in an answer is a mention too. In the default matching the brand name alone
+ * already covers a domain that contains it; exact matching ("SignUp", same capitals)
+ * doesn't cover "signup.com", so the domain is always added there.
  */
-export function pipelineAliases(client: { name: string; domain: string | null; otherNames: string[] }): string[] {
+export function pipelineAliases(client: {
+  name: string;
+  domain: string | null;
+  otherNames: string[];
+  exactNameMatch?: boolean;
+}): string[] {
   const aliases = [...client.otherNames];
   const site = siteDomain(client.domain);
-  if (site && !site.includes(client.name.toLowerCase())) aliases.push(site);
+  if (site && (client.exactNameMatch || !site.includes(client.name.toLowerCase()))) aliases.push(site);
   return aliases;
+}
+
+/**
+ * Under exact matching, whether a brand name the extraction listed is the client itself:
+ * the brand name or an other name, any capitals, optionally as a domain ("SignUp.com"),
+ * or the client's own domain. "SignUpGenius" and "SignUp Genius" are not.
+ */
+export function isExactClientLabel(
+  label: string,
+  client: { name: string; domain: string | null; otherNames: string[] },
+): boolean {
+  const key = (s: string) => s.trim().toLowerCase().replace(/^www\./, "").replace(/\.(com|org|net|io|co|us)$/, "").trim();
+  const k = key(label);
+  if (!k) return false;
+  const site = siteDomain(client.domain);
+  return [client.name, ...client.otherNames, ...(site ? [site] : [])].some((n) => key(n) === k);
 }

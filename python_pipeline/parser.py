@@ -37,7 +37,17 @@ def normalize_text(text: str) -> str:
     return text.translate(_UNICODE_FOLD) if text else text
 
 
-def analyze(response: str, brand: str, competitors: list = None, aliases: list = None) -> MentionResult:
+def exact_name_pattern(name: str) -> re.Pattern:
+    """A client name under the portal's "Match the name exactly" setting (user, 2026-11-25):
+    a whole word with the same capitals, so "SignUp" never matches inside "SignUpGenius",
+    "VolunteerSignUp" or "free signup sheets". A domain ("signup.com") still matches in any
+    capitals, as a whole host name (subdomains too, never inside "volunteersignup.com")."""
+    if "." in name and " " not in name:
+        return re.compile(r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)*" + re.escape(name) + r"(?![A-Za-z0-9-])", re.IGNORECASE)
+    return re.compile(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])")
+
+
+def analyze(response: str, brand: str, competitors: list = None, aliases: list = None, exact: bool = False) -> MentionResult:
     """
     `aliases`: other exact names the client may be mentioned under (e.g. a formal legal
     name alongside a shorthand/acronym) -- a match on ANY of [brand] + aliases counts as
@@ -45,6 +55,9 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
     name, never the alias that happened to match -- otherwise the same client would
     fragment into separate rows across different reports depending on which name an AI
     response happened to use.
+
+    `exact`: match the client's names with exact_name_pattern() instead of anywhere in
+    any capitals (default, unchanged).
     """
     if not response:
         return MentionResult(False, None, "n/a", "", [], [])
@@ -55,6 +68,8 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
     numbered_items = _extract_numbered_items(response)
     competitor_entries = _find_brands_in_response(response, competitors, numbered_items)
     top_items = _extract_top_items(numbered_items, n=5)
+    if exact:
+        return _analyze_exact(response, brand, competitors, match_names, numbered_items, competitor_entries, top_items)
 
     client_pos = None
     for name in match_names:
@@ -96,6 +111,55 @@ def analyze(response: str, brand: str, competitors: list = None, aliases: list =
     sentiment = _detect_sentiment(excerpt)
 
     return MentionResult(True, rank, sentiment, excerpt, brands_in_response, top_items)
+
+
+def _analyze_exact(response, brand, competitors, match_names, numbered_items, competitor_entries, top_items) -> MentionResult:
+    """analyze() with exact_name_pattern() for every client name. Same steps and rules;
+    ranking drops the loose "all the words somewhere in the first 80 characters" stage."""
+    patterns = [exact_name_pattern(n) for n in match_names]
+    hits = [m.start() for m in (p.search(response) for p in patterns) if m]
+    if not hits:
+        return MentionResult(False, None, "n/a", "", competitor_entries, top_items)
+    client_pos = min(hits)
+
+    rank = None
+    for stage in ("lead", "first80"):   # the name leads the item, then anywhere in its first 80 characters
+        for r, text in sorted(numbered_items.items()):
+            t = text.strip()
+            if any(p.match(t) if stage == "lead" else p.search(t[:80]) for p in patterns):
+                rank = r
+                break
+        if rank is not None:
+            break
+    if rank is None:   # named outside any list: order of first appearance among the competitors
+        positions = {"__client__": client_pos}
+        for c in competitors:
+            m = re.search(re.escape(c), response, re.IGNORECASE)
+            if m:
+                positions[c] = m.start()
+        rank = sorted(positions, key=lambda k: positions[k]).index("__client__") + 1
+
+    brands_in_response = sorted(competitor_entries + [(brand, rank)], key=lambda x: (x[1] if x[1] is not None else 999))
+    if not any(p.search(label) for p in patterns for _, label in top_items):
+        insert_at = len(top_items)
+        for i, (_, label) in enumerate(top_items):
+            key = label[:15].strip()
+            if key:
+                item_m = re.search(re.escape(key), response, re.IGNORECASE)
+                if item_m and client_pos < item_m.start():
+                    insert_at = i
+                    break
+        top_items = list(top_items)
+        top_items.insert(insert_at, (rank, brand))
+        top_items = top_items[:5]
+
+    excerpt = ""
+    sentences = re.split(r'(?<=[.!?])\s+', response)
+    for i, sentence in enumerate(sentences):
+        if any(p.search(sentence) for p in patterns):
+            excerpt = ' '.join(s.strip() for s in sentences[i:i + 2] if s.strip())
+            break
+    return MentionResult(True, rank, _detect_sentiment(excerpt), excerpt, brands_in_response, top_items)
 
 
 def _extract_numbered_items(text: str) -> dict:

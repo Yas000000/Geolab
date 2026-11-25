@@ -76,6 +76,12 @@ model Client {
   // (src/lib/client-names.ts). Separate from BrandAlias, which the competitor-name
   // merge fills in automatically (user, 2026-11-25).
   otherNames String[] @default([])
+
+  // Settings / Add Client "Match the name exactly": the brand name and other names count
+  // only as whole words with the same capitals ("SignUp", never inside "SignUpGenius" or
+  // "free signup sheets"); the domain still counts in any capitals. Off = anywhere, any
+  // capitals, as before (user, 2026-11-25; python_pipeline/parser.py exact_name_pattern).
+  exactNameMatch Boolean @default(false)
 }
 
 // A place a client is tracked in (MacuMira: Canada, Australia, New Zealand).

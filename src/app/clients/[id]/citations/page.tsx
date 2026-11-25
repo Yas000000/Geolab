@@ -22,6 +22,7 @@ async function getClient(id: string) {
       name: true,
       domain: true,
       otherNames: true,
+      exactNameMatch: true,
       benchmarkSnapshots: { select: { snapshotDate: true } },
       locations: { orderBy: { position: "asc" }, select: { id: true, label: true } },
       brands: { where: { isClientBrand: true }, select: { name: true, aliases: { select: { alias: true } } } },
@@ -199,7 +200,11 @@ export default async function ClientCitationsPage({
   // client name or the client's domain, or that cite the client's site -- so
   // the page doesn't pull every answer's full text.
   const brandName = client.brands[0]?.name ?? client.name;
-  const brandNames = [...client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]), ...client.otherNames];
+  // Under "Match the name exactly" only the client's own names count, never the aliases the
+  // competitor-name merge stored on its brand.
+  const brandNames = client.exactNameMatch
+    ? [...client.brands.map((b) => b.name), ...client.otherNames]
+    : [...client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]), ...client.otherNames];
   const spanRuns = citationTrackedRuns(client.runs).filter(
     (run) => inWindow(run.startedAt, dateRange) && run.rawResponses.some((r) => r.citations.some((c) => c.spans != null)),
   );
@@ -230,6 +235,7 @@ export default async function ClientCitationsPage({
     backingScope.map((r) => ({ platform: r.platform, text: textById.get(r.id) ?? "", citations: r.citations })),
     brandNames,
     ownDomain,
+    client.exactNameMatch,
   );
   const backingPlatforms = Object.keys(backing.byPlatform).sort((a, b) =>
     (PLATFORM_LABEL[a] ?? a).localeCompare(PLATFORM_LABEL[b] ?? b),

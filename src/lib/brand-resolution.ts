@@ -42,11 +42,17 @@ interface CanonicalEntry {
  * Returns a Map from each input name's lowercased text to the Brand id it
  * resolved to -- same shape as the `brandIdByName` map callPipelineAndPersist
  * already builds.
+ *
+ * `keepOutOfClientBrand` (clients set to "Match the name exactly"): nothing merges
+ * into the client's own brand here, and its stored aliases aren't used to resolve
+ * names. The caller has already sent the client's exact names to it, and for a name
+ * like "SignUp" a whole-word match ("SignUp Genius") is a different company.
  */
 export async function resolveBrandNames(
   clientId: string,
   names: string[],
   clientBrandId: string,
+  options: { keepOutOfClientBrand?: boolean } = {},
 ): Promise<Map<string, string>> {
   const resolved = new Map<string, string>();
 
@@ -58,12 +64,14 @@ export async function resolveBrandNames(
     }),
   ]);
 
+  const outOfClient = (brandId: string) => options.keepOutOfClientBrand && brandId === clientBrandId;
   for (const b of brands) resolved.set(b.name.toLowerCase(), b.id);
-  for (const a of aliases) resolved.set(a.alias.toLowerCase(), a.brandId);
+  for (const a of aliases) if (!outOfClient(a.brandId)) resolved.set(a.alias.toLowerCase(), a.brandId);
 
   // Sorted ascending so DB-seeded canonicals are checked shortest-first,
   // matching the source's "shortest/cleanest label anchors" convention.
   const canonicals: CanonicalEntry[] = brands
+    .filter((b) => !outOfClient(b.id))
     .map((b) => ({ brandId: b.id, name: b.name }))
     .sort((a, b) => a.name.length - b.name.length);
 

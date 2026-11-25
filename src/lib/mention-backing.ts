@@ -61,13 +61,27 @@ function escapeRegExp(s: string): string {
  * (also inside a link or URL path), or the client's own domain anywhere
  * ("yellowbrickprogram.com", inside links and URLs too).
  */
-export function mentionPositions(text: string, names: string[], ownDomain: string | null = null): number[] {
+export function mentionPositions(text: string, names: string[], ownDomain: string | null = null, exact = false): number[] {
   const cleaned = [...new Set(names.map((n) => fold(n.trim())).filter(Boolean))].sort((a, b) => b.length - a.length);
   if (!text || (!cleaned.length && !ownDomain)) return [];
-  const parts = cleaned.map((n) => `(?<![\\p{L}\\p{N}_])${escapeRegExp(n)}(?![\\p{L}\\p{N}_])`);
-  if (ownDomain) parts.push(escapeRegExp(ownDomain));
-  const re = new RegExp(parts.join("|"), "giu");
-  return [...fold(text).matchAll(re)].map((m) => m.index);
+  const wholeWord = (n: string) => `(?<![\\p{L}\\p{N}_])${escapeRegExp(n)}(?![\\p{L}\\p{N}_])`;
+  if (!exact) {
+    const parts = cleaned.map(wholeWord);
+    if (ownDomain) parts.push(escapeRegExp(ownDomain));
+    const re = new RegExp(parts.join("|"), "giu");
+    return [...fold(text).matchAll(re)].map((m) => m.index);
+  }
+  // The client's "Match the name exactly" setting: names only with the same capitals, the
+  // domain only as a whole host name ("signup.com", never inside "volunteersignup.com"),
+  // like python_pipeline/parser.py exact_name_pattern.
+  const folded = fold(text);
+  const found: number[] = [];
+  if (cleaned.length) found.push(...[...folded.matchAll(new RegExp(cleaned.map(wholeWord).join("|"), "gu"))].map((m) => m.index));
+  if (ownDomain) {
+    const host = new RegExp(`(?<![a-z0-9.-])(?:[a-z0-9-]+\\.)*${escapeRegExp(ownDomain)}(?![a-z0-9-])`, "gi");
+    found.push(...[...folded.matchAll(host)].map((m) => m.index));
+  }
+  return [...new Set(found)].sort((a, b) => a - b);
 }
 
 // A top-level list item ("1. ", "2) ", "- ", "* ", "• "); deeper sub-items are
@@ -178,9 +192,10 @@ export function backingForAnswer(
   answer: BackingAnswer,
   names: string[],
   ownDomain: string | null,
+  exact = false,
 ): { kind: BackingKind; pages: SpanCitation[] } | null {
   const ownCited = answer.citations.filter((c) => isOwnSite(c.domain, ownDomain));
-  const positions = mentionPositions(answer.text, names, ownDomain);
+  const positions = mentionPositions(answer.text, names, ownDomain, exact);
   if (!positions.length && !ownCited.length) return null;
   const units = answerUnits(answer.text);
   const linked = answer.citations.map((c) => ({ c, spans: spansOf(c) }));
@@ -229,13 +244,14 @@ export function summarizeMentionBacking(
   answers: BackingAnswer[],
   names: string[],
   ownDomain: string | null,
+  exact = false,
 ): MentionBackingSummary {
   const total = emptyCounts();
   const byPlatform: Record<string, BackingCounts> = {};
   const pages = new Map<string, BackingPageRow>();
 
   for (const a of answers) {
-    const result = backingForAnswer(a, names, ownDomain);
+    const result = backingForAnswer(a, names, ownDomain, exact);
     if (!result) continue;
     const p = (byPlatform[a.platform] ??= emptyCounts());
     for (const counts of [total, p]) {

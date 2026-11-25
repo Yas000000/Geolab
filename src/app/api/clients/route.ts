@@ -26,6 +26,8 @@ interface NewClientRequestBody {
   promptLocations?: Record<string, number[]>;
   // Names AI answers use for the client besides brandName ("Alaco" for Alaco Ladder).
   otherNames?: string[] | string;
+  // Count the names only exactly: same capitals, whole word ("SignUp", not "SignUpGenius").
+  exactNameMatch?: boolean;
 }
 
 function pipelineUrl(request: Request): string {
@@ -59,8 +61,13 @@ export async function POST(request: Request): Promise<Response> {
     gscSiteUrl: body.gscSiteUrl,
   });
   // Saved before the first run, which reads them (callPipelineAndPersist). Adding an
-  // existing client again keeps the names it has unless new ones were typed.
-  if (otherNames.length) await prisma.client.update({ where: { id: client.id }, data: { otherNames } });
+  // existing client again keeps the names and matching it has unless new ones were given.
+  if (otherNames.length || body.exactNameMatch) {
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { ...(otherNames.length ? { otherNames } : {}), ...(body.exactNameMatch ? { exactNameMatch: true } : {}) },
+    });
+  }
   const brand = await findOrCreateBrand(client.id, brandName, true);
   // Locations: created once (adding an existing client again keeps the ones it has).
   const locationIds: string[] = [];

@@ -23,6 +23,8 @@ interface PatchBody {
   archived?: boolean;
   /** Settings > Other Names: names AI answers use for the client besides its brand name. */
   otherNames?: string[] | string;
+  /** Settings > Other Names: match the brand and other names only exactly (same capitals, whole word). */
+  exactNameMatch?: boolean;
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
@@ -52,6 +54,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
     where: { id },
     data: {
       otherNames,
+      exactNameMatch: typeof body.exactNameMatch === "boolean" ? body.exactNameMatch : undefined,
       schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
       ga4PropertyId: body.ga4PropertyId === undefined ? undefined : body.ga4PropertyId || null,
       gscSiteUrl: body.gscSiteUrl === undefined ? undefined : body.gscSiteUrl || null,

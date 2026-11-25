@@ -73,6 +73,9 @@ class RunPipelineRequest(BaseModel):
     # Other exact names the client may be mentioned under -- any match counts
     # as the client, always reported under `brand` (parser.analyze()).
     aliases: list[str] | None = None
+    # Settings "Match the name exactly": brand and aliases count only as whole words with
+    # the same capitals ("SignUp", never inside "SignUpGenius"); see parser.exact_name_pattern().
+    exact_match: bool = False
     platforms: list[str] | None = None
     live_search: bool = False
     # The client's locations, for prompts' locationIds (Live Search only:
@@ -228,7 +231,7 @@ async def run_pipeline(payload: RunPipelineRequest) -> dict:
                 traceback.print_exc()
                 label = f"{platform_key} (live search)" if payload.live_search else platform_key
                 result = PlatformResult(label, "", error=f"{type(e).__name__}: {e}")
-        parsed = analyze(result.response, payload.brand, payload.competitors or [], payload.aliases or [])
+        parsed = analyze(result.response, payload.brand, payload.competitors or [], payload.aliases or [], exact=payload.exact_match)
         return {
             "promptPosition": prompt_entry["position"],
             "promptText": prompt_entry["text"],

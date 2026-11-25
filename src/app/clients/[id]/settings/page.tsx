@@ -58,6 +58,7 @@ async function getClient(id: string) {
       scheduledLiveSearch: true,
       showAiConversions: true,
       otherNames: true,
+      exactNameMatch: true,
       locations: { orderBy: { position: "asc" }, include: { _count: { select: { rawResponses: true } } } },
       ga4PropertyId: true,
       gscSiteUrl: true,
@@ -126,7 +127,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
           Other Names
         </h2>
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-          <OtherNamesForm clientId={id} initialNames={client.otherNames} />
+          <OtherNamesForm clientId={id} initialNames={client.otherNames} initialExact={client.exactNameMatch} />
         </div>
       </section>
 

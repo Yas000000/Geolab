@@ -3,7 +3,7 @@ import { Platform, RunStatus } from "@/generated/prisma/client";
 import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-platform-map";
 import { resolveBrandNames } from "@/lib/brand-resolution";
 import { isOwnSite, siteDomain } from "@/lib/citations";
-import { pipelineAliases } from "@/lib/client-names";
+import { isExactClientLabel, pipelineAliases } from "@/lib/client-names";
 import { Agent, fetch as undiciFetch } from "undici";
 import { internalHeaders } from "@/lib/internal-key";
 import type { ScheduleValue } from "@/lib/schedule-options";
@@ -110,13 +110,18 @@ export async function callPipelineAndPersist(params: {
   // that names only "Alaco", or writes "alacoladder.com", counts as a mention.
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    select: { domain: true, otherNames: true },
+    select: { domain: true, otherNames: true, exactNameMatch: true },
   });
-  const otherNames = client?.otherNames ?? [];
-  const body = {
-    ...pipelineBody,
-    aliases: pipelineAliases({ name: brandName, domain: client?.domain ?? null, otherNames }),
+  const names = {
+    name: brandName,
+    domain: client?.domain ?? null,
+    otherNames: client?.otherNames ?? [],
+    exactNameMatch: client?.exactNameMatch ?? false,
   };
+  const otherNames = names.otherNames;
+  // "Match the name exactly" (Settings): the parser counts the names only as whole words
+  // with the same capitals (python_pipeline/parser.py exact_name_pattern).
+  const body = { ...pipelineBody, aliases: pipelineAliases(names), exact_match: names.exactNameMatch };
 
   let pipeline: PipelineResponse;
   try {
@@ -177,14 +182,21 @@ export async function callPipelineAndPersist(params: {
       for (const name of r.parsed.extractedBrands) uniqueExtractedNames.add(name);
     }
     // The client's own names go straight to its brand, so an extracted "Alaco" never
-    // becomes a competitor Brand row.
+    // becomes a competitor Brand row. Under exact matching that includes "SignUp.com"
+    // style spellings, and nothing else may merge into the client's brand: "SignUp Genius"
+    // contains "SignUp" as a whole word but is a competitor.
     const clientNames = new Set([brandName, ...otherNames].map((n) => n.toLowerCase()));
+    const isClientLabel = (n: string) =>
+      clientNames.has(n.toLowerCase()) || (names.exactNameMatch && isExactClientLabel(n, names));
+    const extracted = Array.from(uniqueExtractedNames);
     const brandIdByName = await resolveBrandNames(
       clientId,
-      Array.from(uniqueExtractedNames).filter((n) => !clientNames.has(n.toLowerCase())),
+      extracted.filter((n) => !isClientLabel(n)),
       brandId,
+      { keepOutOfClientBrand: names.exactNameMatch },
     );
     for (const n of clientNames) brandIdByName.set(n, brandId);
+    for (const n of extracted) if (isClientLabel(n)) brandIdByName.set(n.toLowerCase(), brandId);
 
     // A page of the client's own site cited as a source is a mention too,
     // even when the answer's text never names them (user's rule, 2026-11-12:
