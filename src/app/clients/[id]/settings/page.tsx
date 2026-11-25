@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { StatusPill } from "@/components/status-pill";
 import { ClientSettingsForm } from "@/components/client-settings-form";
+import { OtherNamesForm } from "@/components/other-names-form";
 import { RunNowButton } from "@/components/run-now-button";
 import { TrackedPromptsEditor } from "@/components/tracked-prompts-editor";
 import { getTrackedPromptSet } from "@/lib/tracked-prompts";
@@ -56,6 +57,7 @@ async function getClient(id: string) {
       schedule: true,
       scheduledLiveSearch: true,
       showAiConversions: true,
+      otherNames: true,
       locations: { orderBy: { position: "asc" }, include: { _count: { select: { rawResponses: true } } } },
       ga4PropertyId: true,
       gscSiteUrl: true,
@@ -116,6 +118,15 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
               answers: l._count.rawResponses,
             }))}
           />
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-500">
+          Other Names
+        </h2>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <OtherNamesForm clientId={id} initialNames={client.otherNames} />
         </div>
       </section>
 

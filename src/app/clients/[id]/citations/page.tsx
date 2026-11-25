@@ -21,6 +21,7 @@ async function getClient(id: string) {
       id: true,
       name: true,
       domain: true,
+      otherNames: true,
       benchmarkSnapshots: { select: { snapshotDate: true } },
       locations: { orderBy: { position: "asc" }, select: { id: true, label: true } },
       brands: { where: { isClientBrand: true }, select: { name: true, aliases: { select: { alias: true } } } },
@@ -198,7 +199,7 @@ export default async function ClientCitationsPage({
   // client name or the client's domain, or that cite the client's site -- so
   // the page doesn't pull every answer's full text.
   const brandName = client.brands[0]?.name ?? client.name;
-  const brandNames = client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]);
+  const brandNames = [...client.brands.flatMap((b) => [b.name, ...b.aliases.map((a) => a.alias)]), ...client.otherNames];
   const spanRuns = citationTrackedRuns(client.runs).filter(
     (run) => inWindow(run.startedAt, dateRange) && run.rawResponses.some((r) => r.citations.some((c) => c.spans != null)),
   );

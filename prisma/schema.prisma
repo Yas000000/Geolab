@@ -69,6 +69,13 @@ model Client {
   // traffic). Off by default; the figures are pulled for every client either way, so
   // switching it on shows history straight away (user, 2026-11-23).
   showAiConversions Boolean @default(false)
+
+  // Other names AI answers use for the client besides its brand name, typed in
+  // Settings or Add Client (e.g. "Alaco" for Alaco Ladder). Each counts as a mention
+  // exactly like the full name; passed to the pipeline's parser with the bare domain
+  // (src/lib/client-names.ts). Separate from BrandAlias, which the competitor-name
+  // merge fills in automatically (user, 2026-11-25).
+  otherNames String[] @default([])
 }
 
 // A place a client is tracked in (MacuMira: Canada, Australia, New Zealand).

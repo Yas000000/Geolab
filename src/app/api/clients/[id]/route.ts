@@ -4,6 +4,7 @@ import { importHistoryForClient } from "@/lib/analytics-sync";
 import { RunSchedule } from "@/generated/prisma/client";
 import { deleteClient, setArchived } from "@/lib/client-lifecycle";
 import { requireTeam } from "@/lib/viewer";
+import { cleanOtherNames } from "@/lib/client-names";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ interface PatchBody {
   showAiConversions?: boolean;
   /** Settings > Archive or Delete: true archives the client, false restores it. Sent on its own. */
   archived?: boolean;
+  /** Settings > Other Names: names AI answers use for the client besides its brand name. */
+  otherNames?: string[] | string;
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[id]">): Promise<Response> {
@@ -42,10 +45,13 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/clients/[i
   if (body.schedule && !(body.schedule in RunSchedule)) {
     return Response.json({ error: "Invalid schedule" }, { status: 400 });
   }
+  const otherNames = body.otherNames === undefined ? undefined : cleanOtherNames(body.otherNames, client.name);
+  if (typeof otherNames === "string") return Response.json({ error: otherNames }, { status: 400 });
 
   const updated = await prisma.client.update({
     where: { id },
     data: {
+      otherNames,
       schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
       ga4PropertyId: body.ga4PropertyId === undefined ? undefined : body.ga4PropertyId || null,
       gscSiteUrl: body.gscSiteUrl === undefined ? undefined : body.gscSiteUrl || null,

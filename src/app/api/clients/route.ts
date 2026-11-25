@@ -6,6 +6,7 @@ import { findOrCreateClient, findOrCreateBrand, callPipelineAndPersist } from "@
 import { parsePromptsText, promptKey } from "@/lib/parse-prompts";
 import { cleanLocation, pipelineLocations, type LocationInput } from "@/lib/client-locations";
 import { requireTeam } from "@/lib/viewer";
+import { cleanOtherNames } from "@/lib/client-names";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,8 @@ interface NewClientRequestBody {
   // each prompt is tracked in, keyed by promptKey(text). A prompt left out: all of them.
   locations?: LocationInput[];
   promptLocations?: Record<string, number[]>;
+  // Names AI answers use for the client besides brandName ("Alaco" for Alaco Ladder).
+  otherNames?: string[] | string;
 }
 
 function pipelineUrl(request: Request): string {
@@ -47,12 +50,17 @@ export async function POST(request: Request): Promise<Response> {
   if (new Set(locations.map((l) => l.label.toLowerCase())).size !== locations.length) {
     return Response.json({ error: "Two locations have the same name." }, { status: 400 });
   }
+  const otherNames = cleanOtherNames(body.otherNames, brandName);
+  if (typeof otherNames === "string") return Response.json({ error: otherNames }, { status: 400 });
 
   const client = await findOrCreateClient(brandName, domain, {
     schedule: body.schedule ? RunSchedule[body.schedule] : undefined,
     ga4PropertyId: body.ga4PropertyId,
     gscSiteUrl: body.gscSiteUrl,
   });
+  // Saved before the first run, which reads them (callPipelineAndPersist). Adding an
+  // existing client again keeps the names it has unless new ones were typed.
+  if (otherNames.length) await prisma.client.update({ where: { id: client.id }, data: { otherNames } });
   const brand = await findOrCreateBrand(client.id, brandName, true);
   // Locations: created once (adding an existing client again keeps the ones it has).
   const locationIds: string[] = [];

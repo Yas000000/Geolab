@@ -6,6 +6,7 @@ import Link from "next/link";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/searchable-select";
 import { dedupePrompts, parsePromptsText, promptKey } from "@/lib/parse-prompts";
 import { SCHEDULE_OPTIONS, type ScheduleValue } from "@/lib/schedule-options";
+import { OTHER_NAMES_HINT } from "@/lib/client-names";
 
 // A place the client is tracked in; Live Search asks each prompt once per location it's ticked for.
 interface LocationDraft {
@@ -47,6 +48,7 @@ export default function NewClientPage() {
   const router = useRouter();
   const [brandName, setBrandName] = useState("");
   const [domain, setDomain] = useState("");
+  const [otherNames, setOtherNames] = useState("");
   const [promptsText, setPromptsText] = useState("");
   const [schedule, setSchedule] = useState<ScheduleValue>("MANUAL");
   const [ga4PropertyId, setGa4PropertyId] = useState("");
@@ -99,6 +101,7 @@ export default function NewClientPage() {
         body: JSON.stringify({
           brandName,
           domain,
+          otherNames,
           promptsText,
           schedule,
           ga4PropertyId: ga4PropertyId || undefined,
@@ -168,6 +171,16 @@ export default function NewClientPage() {
               />
             </Field>
           </div>
+
+          <Field label="Other Names" hint={OTHER_NAMES_HINT}>
+            <input
+              type="text"
+              value={otherNames}
+              onChange={(e) => setOtherNames(e.target.value)}
+              className={inputClass}
+              placeholder="Acme"
+            />
+          </Field>
 
           <Field
             label="Prompts to Track"

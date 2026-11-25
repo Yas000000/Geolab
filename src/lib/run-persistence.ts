@@ -3,6 +3,7 @@ import { Platform, RunStatus } from "@/generated/prisma/client";
 import { PLATFORM_MAP, mapSentiment, type PipelineSentiment } from "@/lib/geo-platform-map";
 import { resolveBrandNames } from "@/lib/brand-resolution";
 import { isOwnSite, siteDomain } from "@/lib/citations";
+import { pipelineAliases } from "@/lib/client-names";
 import { Agent, fetch as undiciFetch } from "undici";
 import { internalHeaders } from "@/lib/internal-key";
 import type { ScheduleValue } from "@/lib/schedule-options";
@@ -104,12 +105,25 @@ export async function callPipelineAndPersist(params: {
 }): Promise<{ status: "COMPLETE" | "FAILED"; error?: string }> {
   const { runId, promptSetId, clientId, brandId, brandName, pipelineUrl, pipelineBody } = params;
 
+  // Every run path comes through here, so the client's other names (Settings / Add
+  // Client) and its bare domain reach the parser as aliases on all of them: an answer
+  // that names only "Alaco", or writes "alacoladder.com", counts as a mention.
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { domain: true, otherNames: true },
+  });
+  const otherNames = client?.otherNames ?? [];
+  const body = {
+    ...pipelineBody,
+    aliases: pipelineAliases({ name: brandName, domain: client?.domain ?? null, otherNames }),
+  };
+
   let pipeline: PipelineResponse;
   try {
     const res = await undiciFetch(pipelineUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...internalHeaders() },
-      body: JSON.stringify(pipelineBody),
+      body: JSON.stringify(body),
       dispatcher: pipelineAgent,
     });
     if (!res.ok) {
@@ -162,8 +176,15 @@ export async function callPipelineAndPersist(params: {
     for (const r of pipeline.results) {
       for (const name of r.parsed.extractedBrands) uniqueExtractedNames.add(name);
     }
-    const brandIdByName = await resolveBrandNames(clientId, Array.from(uniqueExtractedNames), brandId);
-    brandIdByName.set(brandName.toLowerCase(), brandId);
+    // The client's own names go straight to its brand, so an extracted "Alaco" never
+    // becomes a competitor Brand row.
+    const clientNames = new Set([brandName, ...otherNames].map((n) => n.toLowerCase()));
+    const brandIdByName = await resolveBrandNames(
+      clientId,
+      Array.from(uniqueExtractedNames).filter((n) => !clientNames.has(n.toLowerCase())),
+      brandId,
+    );
+    for (const n of clientNames) brandIdByName.set(n, brandId);
 
     // A page of the client's own site cited as a source is a mention too,
     // even when the answer's text never names them (user's rule, 2026-11-12:
@@ -171,9 +192,7 @@ export async function callPipelineAndPersist(params: {
     // Claude, Gemini and Perplexity list sources outside the answer text, so
     // the parser can't see these. Such a mention ranks #1, the same as a name
     // outside the AI's list (user's rule, 2026-11-13), with a neutral tone.
-    const ownDomain = siteDomain(
-      (await prisma.client.findUnique({ where: { id: clientId }, select: { domain: true } }))?.domain,
-    );
+    const ownDomain = siteDomain(client?.domain);
     const sourceOnly = (r: PipelineResultCell) =>
       !r.parsed.mentioned && (r.citations ?? []).some((c) => isOwnSite(c.domain, ownDomain));
 
